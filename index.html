@@ -107,6 +107,13 @@
 
     <script type="text/babel">
         const SERVER_URL = '/api/'; 
+        const gradients = [
+            'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', // 紫蓝
+            'linear-gradient(135deg, #6a11cb 0%, #2575fc 100%)', // 深蓝
+            'linear-gradient(135deg, #ff0844 0%, #ffb199 100%)', // 橘红
+            'linear-gradient(135deg, #0ba360 0%, #3cba92 100%)', // 翠绿
+            'linear-gradient(135deg, #b224ef 0%, #7579ff 100%)'  // 粉紫
+        ];
 
         const Icons = {
             Slideshow: () => <svg width="24" height="24" viewBox="0 0 256 256" fill="currentColor"><path d="M192,56H64A16,16,0,0,0,48,72V184a16,16,0,0,0,16,16H192a16,16,0,0,0,16-16V72A16,16,0,0,0,192,56Zm0,128H64V72H192V184ZM216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40Zm0,160H40V56H216V200ZM168,88v48a8,8,0,0,1-8,8H136v16a8,8,0,0,1-16,0V88a8,8,0,0,1,8-8h32A8,8,0,0,1,168,88Zm-16,0H136v40h16V88ZM104,80H64a8,8,0,0,0-8,8v64a8,8,0,0,0,16,0V136h24a8,8,0,0,0,0-16H72V96h32a8,8,0,0,0,0-16Zm88,0H160a8,8,0,0,0-8,8v64a8,8,0,0,0,16,0V96h24a8,8,0,0,0,0-16Z"/></svg>,
@@ -245,6 +252,16 @@
 
                     function handleSelect(e) {
                         if (!isVisualMode || isDragging || isEditing) return;
+                        const target = e.target;
+                            if (
+                                target.id === 'imageModal' || 
+                                target.id === 'modalImg' ||
+                                target.closest('#imageModal') !== null
+                            ) {
+                                // 如果点到了 Modal 里面的东西，直接放行原有的点击交互（比如关闭弹窗）
+                                // 并且不要选中它
+                                return; 
+                            }
                         e.stopPropagation();
                         e.preventDefault();
 
@@ -265,7 +282,8 @@
                             payload: {
                                 tagName: selectedEl.tagName,
                                 fontSize: style.fontSize,
-                                color: style.color
+                                color: style.color,
+                                src: selectedEl.src || null // 🌟 确保如果有 src 就传出去，没有传 null
                             }
                         }, '*');
                     }
@@ -731,6 +749,8 @@
             const [scale, setScale] = React.useState(0.5); 
             const [pos, setPos] = React.useState({ left: '50%', top: '50%' });
             const [draggedItem, setDraggedItem] = React.useState(null);
+            const replaceFileRef = React.useRef(null);
+            const [oldImgUrl, setOldImgUrl] = React.useState('');
             
             // 演示模式状态
             const [isPresenting, setIsPresenting] = React.useState(false);
@@ -925,6 +945,39 @@
                     
                 } catch (err) {
                     alert("图片处理或上传失败: " + err.message);
+                } finally {
+                    setStatus('idle');
+                    e.target.value = null; 
+                }
+            };
+
+            const handleReplaceImg = async (e) => {
+                const f = e.target.files[0];
+                if (!f || !oldImgUrl) return;
+                
+                try {
+                    setStatus('loading');
+                    // 压缩
+                    const options = { maxSizeMB: 0.4, maxWidthOrHeight: 1920, useWebWorker: true };
+                    const compressedFile = typeof imageCompression !== 'undefined' ? await imageCompression(f, options) : f;
+                    
+                    // 上传获取新链接
+                    const newUrl = await api.uploadImage(compressedFile);
+                    
+                    // 🌟 核心魔法：使用 split 和 join 瞬间完成代码里的全局替换！
+                    // 哪怕这个旧链接在代码里出现了 10 次，全都会被一次性换成 newUrl
+                    const newCode = code.split(oldImgUrl).join(newUrl);
+                    
+                    setCode(newCode);
+                    setPreviewHtml(newCode);
+                    setSlides(prev => {
+                        const ns = [...prev];
+                        ns[activeIdx] = { ...ns[activeIdx], html: newCode };
+                        api.saveProject(currId, ns, title);
+                        return ns;
+                    });
+                } catch (err) {
+                    alert("替换失败: " + err.message);
                 } finally {
                     setStatus('idle');
                     e.target.value = null; 
@@ -1127,11 +1180,49 @@
 
                             {status === 'loading' ? <div style={{ textAlign: 'center', color: '#6b7280', padding: '80px' }}>加载中...</div> : (
                                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '24px' }}>
-                                    {projects.map(p => (
-                                        <div key={p.id} onClick={() => openProj(p.id)} style={{ background: '#1f2937', borderRadius: '12px', border: '1px solid #374151', cursor: 'pointer', overflow: 'hidden', aspectRatio: '4/3', display: 'flex', flexDirection: 'column', position: 'relative' }}>
-                                            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#374151', fontSize: '3rem' }}><Icons.Presentation /></div>
-                                            <div style={{ padding: '16px', borderTop: '1px solid #374151', background: '#111827' }}><h3 style={{ fontWeight: 'bold', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.title}</h3><p style={{ fontSize: '0.75rem', color: '#6b7280', margin: '4px 0 0' }}>{new Date(p.updated_at).toLocaleDateString()}</p></div>
-                                            <button onClick={(e) => delProj(e, p.id)} style={{ position: 'absolute', top: '8px', right: '8px', padding: '8px', background: '#ef4444', color: 'white', borderRadius: '4px', border: 'none', cursor: 'pointer' }}><Icons.Trash /></button>
+                                    {projects.map((p, index) => (
+                                        <div 
+                                            key={p.id} 
+                                            onClick={() => openProj(p.id)} 
+                                            style={{ 
+                                                background: '#1f2937', borderRadius: '12px', border: '1px solid #374151', 
+                                                cursor: 'pointer', overflow: 'hidden', aspectRatio: '4/3', 
+                                                display: 'flex', flexDirection: 'column', position: 'relative',
+                                                boxShadow: '0 4px 6px rgba(0,0,0,0.1)', transition: 'transform 0.2s, box-shadow 0.2s' 
+                                            }}
+                                            onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 10px 15px rgba(0,0,0,0.2)'; }}
+                                            onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)'; }}
+                                        >
+                                            {/* 🌟 修改点 1：把原来灰蒙蒙的 Icon 换成了漂亮的渐变色封面 */}
+                                            <div style={{ 
+                                                flex: 1, 
+                                                background: gradients[index % gradients.length], 
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center', 
+                                                position: 'relative', overflow: 'hidden'
+                                            }}>
+                                                {/* 提取项目标题的第一个字母作为封面大字 */}
+                                                <span style={{
+                                                    fontSize: '4.5rem', fontWeight: '900', color: 'rgba(255,255,255,0.25)', 
+                                                    textShadow: '0 2px 10px rgba(0,0,0,0.1)'
+                                                }}>
+                                                    {p.title ? p.title.charAt(0).toUpperCase() : 'P'}
+                                                </span>
+                                            </div>
+                                            
+                                            {/* 下半部分：标题和日期保持不变 */}
+                                            <div style={{ padding: '16px', borderTop: '1px solid #374151', background: '#111827' }}>
+                                                <h3 style={{ fontWeight: 'bold', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.title}</h3>
+                                                <p style={{ fontSize: '0.75rem', color: '#6b7280', margin: '4px 0 0' }}>{new Date(p.updated_at).toLocaleDateString()}</p>
+                                            </div>
+                                            
+                                            {/* 🌟 修改点 2：把红色的删除按钮变得半透明，更好看 */}
+                                            <button onClick={(e) => delProj(e, p.id)} style={{
+                                                position: 'absolute', top: '8px', right: '8px', padding: '8px', 
+                                                background: 'rgba(0,0,0,0.5)', color: 'white', borderRadius: '8px', 
+                                                border: 'none', cursor: 'pointer', backdropFilter: 'blur(4px)'
+                                            }}>
+                                                <Icons.Trash />
+                                            </button>
                                         </div>
                                     ))}
                                     {projects.length === 0 && <div onClick={createProj} style={{ border: '2px dashed #374151', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#6b7280', cursor: 'pointer', aspectRatio: '4/3' }}><Icons.Plus /><span style={{ marginTop: '8px' }}>新建项目</span></div>}
@@ -1229,6 +1320,21 @@
                             {isVisualMode && selectedElement && (
                                 <div className="visual-toolbar">
                                     <span style={{fontSize:'0.8rem', color:'#9ca3af', marginRight:'8px'}}>{selectedElement.tagName.toLowerCase()}</span>
+                                    {/* 隐藏的替换文件上传框 */}
+                                    <input type="file" accept="image/*" ref={replaceFileRef} style={{ display: 'none' }} onChange={handleReplaceImg} />
+
+                                    {/* 如果选中的是图片，就显示替换按钮 */}
+                                    {selectedElement.tagName.toLowerCase() === 'img' && (
+                                        <>
+                                            <button className="tool-btn" title="一键替换该图片" onClick={() => {
+                                                setOldImgUrl(selectedElement.src); // 记录要被替换的旧链接
+                                                if (replaceFileRef.current) replaceFileRef.current.click(); // 触发选择文件
+                                            }}>
+                                                <Icons.Image /> 
+                                            </button>
+                                            <div className="tool-divider"></div>
+                                        </>
+                                    )}
                                     
                                     <button className="tool-btn" onClick={() => execVisualCmd('editText')} title="编辑文字"><Icons.Type /></button>
                                     <div className="tool-divider"></div>
