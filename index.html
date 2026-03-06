@@ -590,12 +590,15 @@
             const [showPwdModal, setShowPwdModal] = React.useState(false);
             const [pwdCallback, setPwdCallback] = React.useState(null); // 存储验证成功后要执行的操作
             const [inputPwd, setInputPwd] = React.useState('');
+            const [cursorPos, setCursorPos] = React.useState(null);
             
             const stageRef = React.useRef(null);
             const fileRef = React.useRef(null);
             const iframeRef = React.useRef(null);
             const timerRef = React.useRef(null);
             const lastWheelTime = React.useRef(0);
+            // 把这两行加到你的 useState 列表里
+            const textareaRef = React.useRef(null);
 
             const loadProjs = React.useCallback(() => { 
                 if (!user || !user.id) { setStatus('idle'); return; }
@@ -710,39 +713,67 @@
                 if (!f) return;
                 
                 try {
-                    // --- 新增：图片压缩逻辑 ---
-                    setStatus('loading'); // 可以在界面上显示正在加载
-                    console.log('压缩前大小:', (f.size / 1024 / 1024).toFixed(2), 'MB');
+                    setStatus('loading');
                     
-                    const options = {
-                        maxSizeMB: 0.4,          // 最大体积限制为 0.4MB (400KB)
-                        maxWidthOrHeight: 1920,  // 最大宽高限制为 1920px (保证在PPT里依然清晰)
-                        useWebWorker: true       // 开启多线程压缩，防止卡死页面
-                    };
-                    
-                    // 调用压缩库
-                    const compressedFile = await imageCompression(f, options);
-                    console.log('压缩后大小:', (compressedFile.size / 1024 / 1024).toFixed(2), 'MB');
-                    
-                    // --- 原来的上传逻辑 ---
+                    // 1. 压缩图片
+                    const options = { maxSizeMB: 0.4, maxWidthOrHeight: 1920, useWebWorker: true };
+                    const compressedFile = typeof imageCompression !== 'undefined' ? await imageCompression(f, options) : f;
+                        
+                    // 2. 上传获取纯净 URL
                     const url = await api.uploadImage(compressedFile);
                     
-                    const tag = `<img src="${url}" class="absolute top-12 left-12 transform -translate-x-12 -translate-y-12 w-64 h-auto rounded shadow-lg object-cover" />`;
-                    const n = code + '\n' + tag;
+                    // 我们只插入纯网址
+                    const tag = url; 
                     
-                    setCode(n);
-                    setPreviewHtml(n);
+                    let newCode;
+                    const textarea = textareaRef.current;
+                    
+                    if (textarea) {
+                        // 获取当前的滚动条位置
+                        const currentScrollTop = textarea.scrollTop;
+                        
+                        // 获取选区的起点和终点
+                        // 如果你没有选中文字，start 和 end 会是相等的；
+                        // 如果你选中了文字，start 和 end 就会把选中的文字包起来
+                        const start = textarea.selectionStart;
+                        const end = textarea.selectionEnd;
+                        
+                        // 🌟 核心：用新 URL 替换掉 start 和 end 之间的所有内容
+                        newCode = code.substring(0, start) + tag + code.substring(end);
+                        
+                        // 计算新的光标位置（紧跟在插入的网址后面）
+                        const newPos = start + tag.length;
+                        
+                        // 恢复焦点、光标和滚动条位置
+                        setTimeout(() => {
+                            if (textareaRef.current) {
+                                textareaRef.current.focus();
+                                textareaRef.current.setSelectionRange(newPos, newPos);
+                                textareaRef.current.scrollTop = currentScrollTop;
+                            }
+                        }, 50);
+                        
+                        setCursorPos(newPos);
+                    } else {
+                        // 异常回退情况
+                        newCode = code + '\n' + tag;
+                    }
+                    
+                    setCode(newCode);
+                    setPreviewHtml(newCode);
                     
                     setSlides(prev => {
                         const ns = [...prev];
-                        ns[activeIdx] = { ...ns[activeIdx], html: n };
+                        ns[activeIdx] = { ...ns[activeIdx], html: newCode };
                         api.saveProject(currId, ns, title);
                         return ns;
                     });
+                    
                 } catch (err) {
                     alert("图片处理或上传失败: " + err.message);
                 } finally {
                     setStatus('idle');
+                    e.target.value = null; 
                 }
             };
 
@@ -1070,7 +1101,27 @@
                                         </div>
                                         <button onClick={()=>setShowCode(false)} style={{ color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer' }}><Icons.X /></button>
                                     </div>
-                                    <textarea id="code-editor" value={code} onChange={onCodeChange} style={{ flex: 1, background: '#0d1117', color: '#d1d5db', padding: '16px', border: 'none', fontFamily: 'monospace', fontSize: '0.875rem', lineHeight: '1.5', resize: 'none', outline: 'none' }} spellCheck="false"></textarea>
+
+                                    <textarea 
+                                        id="code-editor" 
+                                        className="sc-code-textarea"
+                                        ref={textareaRef} 
+                                        value={code} 
+                                        onChange={onCodeChange} 
+                                        style={{ 
+                                            flex: 1, 
+                                            background: '#0d1117', 
+                                            color: '#d1d5db', 
+                                            padding: '16px', 
+                                            border: 'none', 
+                                            fontFamily: 'monospace', 
+                                            fontSize: '0.875rem', 
+                                            lineHeight: '1.5', 
+                                            resize: 'none', 
+                                            outline: 'none' 
+                                        }} 
+                                        spellCheck="false"
+                                    ></textarea>
                                 </div>
                             </div>
                         )}
