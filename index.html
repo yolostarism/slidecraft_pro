@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- 图片压缩库 -->
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/browser-image-compression@2.0.2/dist/browser-image-compression.js"></script>
     <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src * 'unsafe-inline' 'unsafe-eval'; style-src * 'unsafe-inline'; worker-src blob:;">
     <title>SlideCraft Pro - Visual Editor</title>
     
@@ -651,7 +653,46 @@
                 });
             };
             
-            const uploadImg = async (e) => { const f = e.target.files[0]; if (!f) return; try { const url = await api.uploadImage(f); const tag = `\n<img src="${url}" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-64 h-auto rounded shadow-lg object-cover" />\n`; const n = code + tag; setCode(n); setPreviewHtml(n); setSlides(prev => { const ns = [...prev]; ns[activeIdx] = { ...ns[activeIdx], html: n }; api.saveProject(currId, ns, title); return ns; }); } catch (e) { alert(e.message); } e.target.value = ''; };
+            const uploadImg = async (e) => {
+                const f = e.target.files[0];
+                if (!f) return;
+                
+                try {
+                    // --- 新增：图片压缩逻辑 ---
+                    setStatus('loading'); // 可以在界面上显示正在加载
+                    console.log('压缩前大小:', (f.size / 1024 / 1024).toFixed(2), 'MB');
+                    
+                    const options = {
+                        maxSizeMB: 0.4,          // 最大体积限制为 0.4MB (400KB)
+                        maxWidthOrHeight: 1920,  // 最大宽高限制为 1920px (保证在PPT里依然清晰)
+                        useWebWorker: true       // 开启多线程压缩，防止卡死页面
+                    };
+                    
+                    // 调用压缩库
+                    const compressedFile = await imageCompression(f, options);
+                    console.log('压缩后大小:', (compressedFile.size / 1024 / 1024).toFixed(2), 'MB');
+                    
+                    // --- 原来的上传逻辑 ---
+                    const url = await api.uploadImage(compressedFile);
+                    
+                    const tag = `<img src="${url}" class="absolute top-12 left-12 transform -translate-x-12 -translate-y-12 w-64 h-auto rounded shadow-lg object-cover" />`;
+                    const n = code + '\n' + tag;
+                    
+                    setCode(n);
+                    setPreviewHtml(n);
+                    
+                    setSlides(prev => {
+                        const ns = [...prev];
+                        ns[activeIdx] = { ...ns[activeIdx], html: n };
+                        api.saveProject(currId, ns, title);
+                        return ns;
+                    });
+                } catch (err) {
+                    alert("图片处理或上传失败: " + err.message);
+                } finally {
+                    setStatus('idle');
+                }
+            };
 
             // 🔥 演示模式逻辑 🔥
             const enterPresentation = () => {
