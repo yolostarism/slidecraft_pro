@@ -1,0 +1,993 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src * 'unsafe-inline' 'unsafe-eval'; style-src * 'unsafe-inline'; worker-src blob:;">
+    <title>SlideCraft Pro - Visual Editor</title>
+    
+    <!-- 1. 基础库 -->
+    <script crossorigin="anonymous" src="https://lib.baomitu.com/react/18.2.0/umd/react.production.min.js"></script>
+    <script crossorigin="anonymous" src="https://lib.baomitu.com/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script crossorigin="anonymous" src="https://lib.baomitu.com/babel-standalone/7.23.5/babel.min.js"></script>
+    
+    <!-- 2. UI 样式库 -->
+    <link href="https://lib.baomitu.com/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+    <!-- Lucide 图标 -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <style>
+        /* 🔥 核心修改：强制亮色主题 & 禁用系统高对比度颜色覆盖 🔥 */
+        :root {
+            color-scheme: light; /* 告诉浏览器此页面专为亮色模式设计 */
+        }
+        * { 
+            box-sizing: border-box; 
+            /* 关键属性：防止 Windows 高对比度模式强制修改颜色 */
+            forced-color-adjust: none !important; 
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        body, html { margin: 0; padding: 0; background-color: #111827; color: white; overflow: hidden; height: 100%; width: 100%; font-family: system-ui, -apple-system, sans-serif; }
+        #root { height: 100%; width: 100%; }
+        
+        .app-layout { display: grid; grid-template-columns: 260px 1fr; grid-template-rows: 100vh; overflow: hidden; width: 100vw; height: 100vh; }
+        .sidebar-left { background-color: #111827; border-right: 1px solid #374151; display: flex; flex-direction: column; overflow: hidden; height: 100%; }
+        .main-workspace { background-color: #1f2937; display: flex; flex-direction: column; overflow: hidden; position: relative; height: 100%; }
+        
+        .stage-container { flex: 1; background-color: #374151; position: relative; overflow: hidden; width: 100%; display: flex; align-items: center; justify-content: center; background-image: radial-gradient(#4b5563 1px, transparent 1px); background-size: 20px 20px; }
+        
+        /* 🔥 标准尺寸 (1344px x 816px) */
+        .stage-content { 
+            width: 1344px; 
+            height: 816px; 
+            background-color: white; 
+            box-shadow: 0 20px 50px -12px rgba(0, 0, 0, 0.5); 
+            position: absolute; 
+            left: 50%; 
+            top: 50%; 
+            transform-origin: center center; 
+            transform: translate(-50%, -50%) scale(0.6); 
+            transition: box-shadow 0.3s ease;
+        }
+
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #1f2937; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+        
+        .resizer { cursor: row-resize; height: 10px; background: #111827; border-top: 1px solid #374151; display: flex; align-items: center; justify-content: center; flex-shrink: 0; z-index: 50; }
+        .resizer:hover { background: #374151; }
+        .resizer::after { content: ''; width: 40px; height: 4px; background: #4b5563; border-radius: 2px; }
+
+        input, textarea { background-color: #0f172a; color: #e2e8f0; border: 1px solid #334155; }
+        input:focus, textarea:focus { outline: 2px solid #6366f1; }
+        #loading-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #6b7280; font-size: 1.2rem; text-align: center; }
+        
+        .thumbnail-wrapper { transition: transform 0.2s ease, box-shadow 0.2s ease; }
+        .thumbnail-active { border-color: #6366f1 !important; box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3); opacity: 1 !important; }
+        .thumbnail-dragging { opacity: 0.3; border: 2px dashed #6b7280; }
+        .thumbnail-drag-over { border-top: 2px solid #6366f1; margin-top: 4px; }
+
+        /* 演示模式全屏覆盖 */
+        .presentation-overlay {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: black; z-index: 9999;
+            display: flex; align-items: center; justify-content: center;
+            outline: none;
+        }
+        
+        /* 编辑工具栏 */
+        .visual-toolbar {
+            position: absolute;
+            top: 16px; left: 50%; transform: translateX(-50%);
+            background: #1f2937; border: 1px solid #374151;
+            padding: 8px 12px; border-radius: 8px;
+            display: flex; gap: 8px; align-items: center;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            z-index: 100;
+        }
+        .tool-btn {
+            background: #374151; color: white; border: none;
+            width: 32px; height: 32px; border-radius: 4px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; transition: background 0.2s;
+        }
+        .tool-btn:hover { background: #4b5563; }
+        .tool-divider { width: 1px; height: 20px; background: #4b5563; margin: 0 4px; }
+    </style>
+</head>
+<body>
+    <div id="root">
+        <div id="loading-text">正在启动 SlideCraft...</div>
+    </div>
+
+    <script type="text/babel">
+        const SERVER_URL = '/api/'; 
+
+        const Icons = {
+            Slideshow: () => <svg width="24" height="24" viewBox="0 0 256 256" fill="currentColor"><path d="M192,56H64A16,16,0,0,0,48,72V184a16,16,0,0,0,16,16H192a16,16,0,0,0,16-16V72A16,16,0,0,0,192,56Zm0,128H64V72H192V184ZM216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40Zm0,160H40V56H216V200ZM168,88v48a8,8,0,0,1-8,8H136v16a8,8,0,0,1-16,0V88a8,8,0,0,1,8-8h32A8,8,0,0,1,168,88Zm-16,0H136v40h16V88ZM104,80H64a8,8,0,0,0-8,8v64a8,8,0,0,0,16,0V136h24a8,8,0,0,0,0-16H72V96h32a8,8,0,0,0,0-16Zm88,0H160a8,8,0,0,0-8,8v64a8,8,0,0,0,16,0V96h24a8,8,0,0,0,0-16Z"/></svg>,
+            Play: () => <svg width="20" height="20" viewBox="0 0 256 256" fill="currentColor"><path d="M240,128a15.74,15.74,0,0,1-7.6,13.51L88.32,229.65a16,16,0,0,1-16.2.3A15.86,15.86,0,0,1,64,216.13V39.87a15.86,15.86,0,0,1,8.12-13.82,16,16,0,0,1,16.2.3L232.4,114.49A15.74,15.74,0,0,1,240,128Z"/></svg>,
+            Plus: () => <svg width="20" height="20" viewBox="0 0 256 256" fill="currentColor"><path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"/></svg>,
+            Trash: () => <svg width="16" height="16" viewBox="0 0 256 256" fill="currentColor"><path d="M216,48H176V40a24,24,0,0,0-24-24H104A24,24,0,0,0,80,40v8H40a8,8,0,0,0,0,16h8V208a16,16,0,0,0,16,16H192a16,16,0,0,0,16-16V64h8a8,8,0,0,0,0-16ZM96,40a8,8,0,0,1,8-8h48a8,8,0,0,1,8,8v8H96Zm96,168H64V64H192ZM112,104v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Zm48,0v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Z"/></svg>,
+            Code: () => <svg width="18" height="18" viewBox="0 0 256 256" fill="currentColor"><path d="M69.12,94.15l-45.6,48.36a8,8,0,0,0,0,11l45.6,48.36a8,8,0,0,0,11.62-11l-40.38-42.89,40.38-42.89a8,8,0,0,0-11.62-11Zm176,48.36L199.5,94.15a8,8,0,0,0-11.62,11l40.38,42.89-40.38,42.89a8,8,0,0,0,11.62,11l45.6-48.36A8,8,0,0,0,245.13,142.51Zm-87.39-86a8,8,0,0,0-10.42,4.7l-48,136a8,8,0,0,0,4.7,10.42,8.12,8.12,0,0,0,2.86.53,8,8,0,0,0,7.56-5.33l48-136A8,8,0,0,0,157.74,56.54Z"/></svg>,
+            Image: () => <svg width="18" height="18" viewBox="0 0 256 256" fill="currentColor"><path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40Zm0,160H40V56H216V200ZM160,80a24,24,0,1,0,24,24A24,24,0,0,0,160,80Zm0,32a8,8,0,1,1,8-8A8,8,0,0,1,160,112ZM216,192H40v-6.9l52.69-52.68a16,16,0,0,1,22.62,0L144,161.1l28.69-28.68a16,16,0,0,1,22.62,0L216,152.94V192Z"/></svg>,
+            X: () => <svg width="18" height="18" viewBox="0 0 256 256" fill="currentColor"><path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z"/></svg>,
+            SignOut: () => <svg width="20" height="20" viewBox="0 0 256 256" fill="currentColor"><path d="M124,216a12,12,0,0,1-12,12H48a12,12,0,0,1-12-12V40A12,12,0,0,1,48,28h64a12,12,0,0,1,0,24H60V204h52A12,12,0,0,1,124,216Zm108.49-96.49-40-40a12,12,0,0,0-17,17L195,116H112a12,12,0,0,0,0,24h83l-19.52,19.52a12,12,0,0,0,17,17l40-40A12,12,0,0,0,232.49,119.51Z"/></svg>,
+            Back: () => <svg width="16" height="16" viewBox="0 0 256 256" fill="currentColor"><path d="M224,128a8,8,0,0,1-8,8H59.31l58.35,58.34a8,8,0,0,1-11.32,11.32l-72-72a8,8,0,0,1,0-11.32l72-72a8,8,0,0,1,11.32,11.32L59.31,120H224A8,8,0,0,1,224,128Z"/></svg>,
+            Presentation: () => <svg width="40" height="40" viewBox="0 0 256 256" fill="currentColor"><path d="M216,40H40A16,16,0,0,0,24,56V176a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40ZM216,176H40V56H216V176ZM208,208a8,8,0,0,1-8,8H56a8,8,0,0,1,0-16H200A8,8,0,0,1,208,208Z"/></svg>,
+            Edit: () => <svg width="20" height="20" viewBox="0 0 256 256" fill="currentColor"><path d="M227.31,73.37,182.63,28.68a16,16,0,0,0-22.63,0L36.69,152.05A15.89,15.89,0,0,0,32,163.31V208a16,16,0,0,0,16,16H92.69A15.86,15.86,0,0,0,104,219.31L227.31,96a16,16,0,0,0,0-22.63ZM92.69,208H48V163.31l88-88L180.69,120ZM192,108.68,147.31,64l24-24L216,84.68Z"/></svg>,
+            FontUp: () => <svg width="20" height="20" viewBox="0 0 256 256" fill="currentColor"><path d="M224,128a8,8,0,0,1-8,8H176v40a8,8,0,0,1-16,0V136H112v40a8,8,0,0,1-16,0V56a8,8,0,0,1,16,0v64h48V56a8,8,0,0,1,16,0v64h40A8,8,0,0,1,224,128ZM64,104a8,8,0,0,0-8,8v16H40V112a8,8,0,0,0-16,0v48a8,8,0,0,0,16,0v-8H56v8a8,8,0,0,0,16,0V112A8,8,0,0,0,64,104Zm-8,40H40v-16h16Z"/></svg>,
+            FontDown: () => <svg width="20" height="20" viewBox="0 0 256 256" fill="currentColor"><path d="M208,112H168V56a8,8,0,0,0-16,0v56H112a8,8,0,0,0-16,0v48a8,8,0,0,0,16,0v-8h40v8a8,8,0,0,0,16,0V128h40a8,8,0,0,0,0-16Zm-56,32H112V128h40ZM88,128a8,8,0,0,1-8,8H64v40a8,8,0,0,1-16,0V136H32a8,8,0,0,1,0-16H80A8,8,0,0,1,88,128Z"/></svg>,
+            Bold: () => <svg width="20" height="20" viewBox="0 0 256 256" fill="currentColor"><path d="M156,128h-52v52h60a28,28,0,0,0,0-56H156Zm-52-32h52a28,28,0,0,0,0-56H80a8,8,0,0,0-8,8v40a8,8,0,0,0,8,8ZM232,160a60.07,60.07,0,0,1-60,60H72a16,16,0,0,1-16-16V56A16,16,0,0,1,72,40h84a60,60,0,0,1,0,120Zm-16-32a43.85,43.85,0,0,0-8.29-25.54,44,44,0,0,0,0-56.92A43.85,43.85,0,0,0,156,24H72V204h92a44,44,0,0,0,52-76Z" opacity="0.2"/><path d="M156,112h-44V56h44a28,28,0,0,1,0,56Zm8,16h-52v56h52a28,28,0,0,0,0-56Zm52,28a44,44,0,0,1-44,44H80a8,8,0,0,1-8-8V40a8,8,0,0,1,8-8h76a44,44,0,0,1,0,88,43.85,43.85,0,0,1,8.29,25.54A43.85,43.85,0,0,1,216,156ZM88,184h84a28,28,0,0,0,0-56H88Zm0-72h76a28,28,0,0,0,0-56H88Z"/></svg>,
+            Italic: () => <svg width="20" height="20" viewBox="0 0 256 256" fill="currentColor"><path d="M200,56a8,8,0,0,1-8,8H167.2l-51.43,128H144a8,8,0,0,1,0,16H72a8,8,0,0,1,0-16H96.8l51.43-128H120a8,8,0,0,1,0-16h72A8,8,0,0,1,200,56Z"/></svg>,
+            Underline: () => <svg width="20" height="20" viewBox="0 0 256 256" fill="currentColor"><path d="M80,40v88a48,48,0,0,0,96,0V40a8,8,0,0,0-16,0v88a32,32,0,0,1-64,0V40a8,8,0,0,0-16,0ZM56,200a8,8,0,0,0,0,16H200a8,8,0,0,0,0-16Z"/></svg>,
+            Type: () => <svg width="20" height="20" viewBox="0 0 256 256" fill="currentColor"><path d="M208,56A8,8,0,0,1,200,64H136V192h24a8,8,0,0,1,0,16H96a8,8,0,0,1,0-16h24V64H56a8,8,0,0,1,0-16H200A8,8,0,0,1,208,56Z"/></svg>
+        };
+
+        const request = async (endpoint, options = {}) => {
+            const timeout = 120000;
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), timeout); 
+            try {
+                const res = await fetch(`${SERVER_URL}${endpoint}`, { ...options, signal: controller.signal });
+                clearTimeout(id);
+                const contentType = res.headers.get("content-type");
+                if (contentType && contentType.includes("application/json")) {
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || '操作失败');
+                    return data;
+                }
+                if (res.ok) return null;
+                throw new Error(`服务器响应异常 (${res.status})`);
+            } catch (e) {
+                clearTimeout(id);
+                if (e.name === 'AbortError') throw new Error('请求超时');
+                throw e;
+            }
+        };
+
+        const api = {
+            login: (username, password) => request('/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username, password}) }),
+            register: (username, password) => request('/register', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username, password}) }),
+            getProjects: (userId) => request(`/projects?userId=${userId}`).catch(() => []), 
+            createProject: (userId, title) => request('/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId, title, slides: DEFAULT_SLIDES }) }),
+            getProjectDetails: (id) => request(`/projects/${id}`),
+            saveProject: (id, slides, title) => request(`/projects/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slides, title }) }),
+            deleteProject: (id) => request(`/projects/${id}`, { method: 'DELETE' }),
+            uploadImage: async (file) => {
+                const formData = new FormData(); formData.append('image', file);
+                return request('/upload', { method: 'POST', body: formData }).then(d => d.url);
+            }
+        };
+
+        const DEFAULT_SLIDES = [{id: 1, html: `<div style="width:100%;height:100%;background:#0f172a;color:white;display:flex;flex-direction:column;align-items:center;justify-content:center"><h1 style="font-size:3.75rem;font-weight:700">SlideCraft</h1><p style="margin-top:1rem;font-size:1.25rem;opacity:0.8">Ready to create.</p></div>`}];
+
+        // 注入可视化编辑器逻辑
+        const VISUAL_SCRIPT = `
+            <style id="sc-visual-style">
+                .visual-mode-active { cursor: default; }
+                .visual-mode-active * { cursor: pointer; transition: outline 0.1s; }
+                .visual-mode-active *:hover { outline: 1px dashed #6366f1; }
+                .sc-selected { outline: 2px solid #6366f1 !important; z-index: 9999; }
+                .sc-dragging { opacity: 0.8; cursor: move !important; }
+                .sc-editing { outline: 2px dashed #10b981 !important; cursor: text !important; min-width: 10px; min-height: 1em; }
+            </style>
+            <script id="sc-visual-script">
+                (function() {
+                    let isVisualMode = false;
+                    let selectedEl = null;
+                    let startX = 0, startY = 0;
+                    let startLeft = 0, startTop = 0;
+                    let isDragging = false;
+                    let isEditing = false;
+
+                    window.enableVisual = () => {
+                        isVisualMode = true;
+                        document.body.classList.add('visual-mode-active');
+                        document.addEventListener('click', handleSelect, true);
+                        document.addEventListener('mousedown', handleDragStart);
+                        document.addEventListener('dblclick', handleEdit, true);
+                    };
+
+                    window.disableVisual = () => {
+                        isVisualMode = false;
+                        document.body.classList.remove('visual-mode-active');
+                        deselect();
+                        document.removeEventListener('click', handleSelect, true);
+                        document.removeEventListener('mousedown', handleDragStart);
+                        document.removeEventListener('dblclick', handleEdit, true);
+                    };
+
+                    function deselect() {
+                        if (selectedEl) {
+                            selectedEl.classList.remove('sc-selected');
+                            selectedEl = null;
+                        }
+                        window.parent.postMessage({type: 'SELECTION_CLEARED'}, '*');
+                    }
+
+                    // 提取进入编辑模式的逻辑，供双击和按钮点击共用
+                    function enterEditMode(el) {
+                        if (selectedEl) selectedEl.classList.remove('sc-selected'); // 编辑时暂时隐藏选中框
+                        
+                        isEditing = true;
+                        el.contentEditable = 'true';
+                        el.classList.add('sc-editing');
+                        el.focus();
+                        
+                        const onBlur = () => {
+                            el.contentEditable = 'false';
+                            el.classList.remove('sc-editing');
+                            isEditing = false;
+                            el.removeEventListener('blur', onBlur);
+                            // 恢复选中框（可选，或者让用户重新点击）
+                            // if(el === selectedEl) el.classList.add('sc-selected');
+                            syncCode();
+                        };
+                        
+                        el.addEventListener('blur', onBlur);
+                    }
+
+                    function handleEdit(e) {
+                        if (!isVisualMode) return;
+                        e.stopPropagation();
+                        e.preventDefault();
+                        
+                        const el = e.target;
+                        if (el === document.body || el === document.documentElement) return;
+                        
+                        enterEditMode(el);
+                    }
+
+                    function handleSelect(e) {
+                        if (!isVisualMode || isDragging || isEditing) return;
+                        e.stopPropagation();
+                        e.preventDefault();
+
+                        // 忽略 body 选择
+                        if (e.target === document.body || e.target === document.documentElement) {
+                            deselect();
+                            return;
+                        }
+
+                        if (selectedEl) selectedEl.classList.remove('sc-selected');
+                        selectedEl = e.target;
+                        selectedEl.classList.add('sc-selected');
+
+                        // 发送当前选中元素信息
+                        const style = window.getComputedStyle(selectedEl);
+                        window.parent.postMessage({
+                            type: 'ELEMENT_SELECTED',
+                            payload: {
+                                tagName: selectedEl.tagName,
+                                fontSize: style.fontSize,
+                                color: style.color
+                            }
+                        }, '*');
+                    }
+
+                    function handleDragStart(e) {
+                        if (!isVisualMode || !selectedEl || e.target !== selectedEl || isEditing) return;
+                        // 允许拖拽
+                        e.preventDefault();
+                        isDragging = true;
+                        startX = e.clientX;
+                        startY = e.clientY;
+                        selectedEl.classList.add('sc-dragging');
+
+                        const style = window.getComputedStyle(selectedEl);
+                        
+                        // 自动升级为 relative 定位以便移动
+                        if (style.position === 'static') {
+                            selectedEl.style.position = 'relative';
+                        }
+                        
+                        // 解析当前 left/top
+                        startLeft = parseFloat(style.left) || 0;
+                        startTop = parseFloat(style.top) || 0;
+                        
+                        // 如果是 relative，left/top 可能是 auto，需特殊处理
+                        if (style.position === 'relative' && style.left === 'auto') startLeft = 0;
+                        if (style.position === 'relative' && style.top === 'auto') startTop = 0;
+
+                        document.addEventListener('mousemove', handleDragMove);
+                        document.addEventListener('mouseup', handleDragEnd);
+                    }
+
+                    function handleDragMove(e) {
+                        if (!isDragging || !selectedEl) return;
+                        const dx = e.clientX - startX;
+                        const dy = e.clientY - startY;
+
+                        selectedEl.style.left = (startLeft + dx) + 'px';
+                        selectedEl.style.top = (startTop + dy) + 'px';
+                    }
+
+                    function handleDragEnd(e) {
+                        isDragging = false;
+                        if (selectedEl) selectedEl.classList.remove('sc-dragging');
+                        document.removeEventListener('mousemove', handleDragMove);
+                        document.removeEventListener('mouseup', handleDragEnd);
+                        
+                        // 拖拽结束，同步代码
+                        // 防止误触点击事件，稍微延迟一下
+                        setTimeout(() => syncCode(), 50);
+                    }
+
+                    // 供父级调用的 API
+                    window.updateSelectedStyle = (key, value) => {
+                        if (!selectedEl) return;
+                        
+                        if (key === 'fontSize') {
+                            let current = parseFloat(window.getComputedStyle(selectedEl).fontSize);
+                            if (value === 'up') selectedEl.style.fontSize = (current + 2) + 'px';
+                            if (value === 'down') selectedEl.style.fontSize = Math.max(8, current - 2) + 'px';
+                        } else if (key === 'color') {
+                            selectedEl.style.color = value;
+                        } else if (key === 'delete') {
+                            selectedEl.remove();
+                            deselect();
+                        } else if (key === 'editText') {
+                            enterEditMode(selectedEl);
+                            return; // 编辑模式由 blur 触发 sync，这里不需要立即 sync
+                        } else if (key === 'bold') {
+                            selectedEl.style.fontWeight = selectedEl.style.fontWeight === 'bold' || parseInt(selectedEl.style.fontWeight) >= 700 ? 'normal' : 'bold';
+                        } else if (key === 'italic') {
+                            selectedEl.style.fontStyle = selectedEl.style.fontStyle === 'italic' ? 'normal' : 'italic';
+                        } else if (key === 'underline') {
+                            selectedEl.style.textDecoration = selectedEl.style.textDecoration.includes('underline') ? 'none' : 'underline';
+                        }
+                        
+                        syncCode();
+                    };
+
+                    function syncCode() {
+                        // 克隆整个文档以避免修改当前视图，并保留 head
+                        const clone = document.documentElement.cloneNode(true);
+                        
+                        // 移除编辑器注入的辅助样式和脚本
+                        const toRemove = ['#sc-preview-reset', '#sc-visual-style', '#sc-visual-script'];
+                        toRemove.forEach(id => {
+                            const el = clone.querySelector(id);
+                            if (el) el.remove();
+                        });
+
+                        // 🔥 新增：移除可能被浏览器/插件注入的 Tailwind 冗余样式块 🔥
+                        // 这种样式块通常包含 --tw-border-spacing-x 等变量，如果不移除会导致 HTML 代码急剧膨胀
+                        const styles = clone.querySelectorAll('style');
+                        styles.forEach(style => {
+                            if (style.textContent && 
+                                style.textContent.includes('--tw-border-spacing-x:0') && 
+                                style.textContent.includes('--tw-rotate:0')) {
+                                style.remove();
+                            }
+                        });
+                        
+                        // 清理 body 上的编辑器类名
+                        const body = clone.querySelector('body');
+                        if (body) {
+                            body.classList.remove('visual-mode-active');
+                        }
+                        
+                        // 清理元素上的选中状态类名
+                        const selected = clone.querySelector('.sc-selected');
+                        if (selected) selected.classList.remove('sc-selected');
+                        const dragging = clone.querySelector('.sc-dragging');
+                        if (dragging) dragging.classList.remove('sc-dragging');
+                        
+                        // 清理 contentEditable 属性和编辑类名
+                        const editables = clone.querySelectorAll('[contenteditable]');
+                        editables.forEach(el => el.removeAttribute('contenteditable'));
+                        const editing = clone.querySelector('.sc-editing');
+                        if (editing) editing.classList.remove('sc-editing');
+
+                        // 构造完整的 HTML 字符串，包含 DOCTYPE
+                        const doctype = document.doctype;
+                        const doctypeString = doctype 
+                            ? '<!DOCTYPE ' + doctype.name + (doctype.publicId ? ' PUBLIC "' + doctype.publicId + '"' : '') + (doctype.systemId ? ' "' + doctype.systemId + '"' : '') + '>' 
+                            : '<!DOCTYPE html>';
+                        
+                        const fullHtml = doctypeString + '\\n' + clone.outerHTML;
+
+                        window.parent.postMessage({type: 'CODE_UPDATE', payload: fullHtml}, '*');
+                    }
+                })();
+            <\/script>
+        `;
+
+        const injectPreview = (html, includeVisualScript = false) => {
+            const isFullHtml = html.trim().match(/^<!DOCTYPE/i) || html.trim().match(/^<html/i);
+            const script = includeVisualScript ? VISUAL_SCRIPT : '';
+            
+            // 🔥 在生成的 iframe 样式中也强制亮色模式和禁用颜色调整 🔥
+            if (isFullHtml) {
+                // 给重置样式添加 ID 以便在保存时移除
+                const resetStyle = `<style id="sc-preview-reset"> 
+                    :root { color-scheme: light; }
+                    * { box-sizing: border-box !important; forced-color-adjust: none !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; } 
+                    body, html { margin: 0 !important; padding: 0 !important; width: 1344px !important; height: 816px !important; overflow: hidden !important; background: none !important; display: block !important; min-height: 0 !important; } 
+                    body > div, .ppt-slide, .slide { width: 100% !important; height: 100% !important; max-width: none !important; border-radius: 0 !important; box-shadow: none !important; aspect-ratio: auto !important; margin: 0 !important; transform: none !important; left: auto !important; top: auto !important; min-height: 0 !important; } 
+                </style>`;
+                let content = html;
+                if (html.includes('<' + '/head>')) content = content.replace('<' + '/head>', resetStyle + '<' + '/head>');
+                else content = resetStyle + content;
+                
+                if (html.includes('<' + '/body>')) content = content.replace('<' + '/body>', script + '<' + '/body>');
+                else content = content + script;
+                return content;
+            }
+            return `<!DOCTYPE html><html><head><meta charset="utf-8"><link href="https://lib.baomitu.com/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet"><style> 
+                :root { color-scheme: light; }
+                * { box-sizing: border-box; forced-color-adjust: none !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; } 
+                body, html { margin: 0 !important; padding: 0 !important; width: 1344px; height: 816px; overflow: hidden; background: transparent; } 
+                * { -webkit-user-select: none; user-select: none; cursor: default; } 
+            </style></head><body>${html}${script}</body></html>`;
+        };
+        
+        const injectThumb = (html) => `<!DOCTYPE html><html><head><link href="https://lib.baomitu.com/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet"><script>function fit(){const w=document.documentElement.clientWidth;const s=w/1344;document.body.style.transform='scale('+s+')';document.body.style.transformOrigin='top left';}window.onload=fit;window.onresize=fit;<\/script><style>
+            :root { color-scheme: light; }
+            * { forced-color-adjust: none !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+            body{margin:0;width:1344px;height:816px;overflow:hidden;background:white}
+            ::-webkit-scrollbar{display:none}
+        </style></head><body>${html}</body></html>`;
+
+        const SlideThumbnail = React.memo(({ slide, index, isActive, onClick, onDelete, onDragStart, onDragOver, onDrop, isDragging }) => {
+            return (
+                <div draggable="true" onDragStart={(e) => onDragStart(e, index)} onDragOver={(e) => onDragOver(e, index)} onDrop={(e) => onDrop(e, index)} onClick={() => onClick(index)} className={`relative thumbnail-wrapper bg-white rounded cursor-pointer border-2 overflow-hidden group ${isActive ? 'thumbnail-active' : 'border-gray-700 opacity-70 hover:opacity-100 hover:border-gray-500 hover:shadow-lg'} ${isDragging ? 'thumbnail-dragging' : ''}`} style={{ aspectRatio: '1.647', flexShrink: 0, transform: isActive ? 'scale(1.02)' : 'scale(1)' }}>
+                    <div className="absolute inset-0 w-full h-full pointer-events-none z-0"><iframe srcDoc={injectThumb(slide.html)} className="w-full h-full border-none" loading="lazy"></iframe></div>
+                    <div className="absolute inset-0 z-10" onClick={() => onClick(index)}></div>
+                    <span className="absolute top-1 left-1 bg-black/60 text-white text-xs px-1.5 py-0.5 rounded backdrop-blur-sm z-20 font-mono shadow pointer-events-none">{index + 1}</span>
+                    <button onClick={(e) => { e.stopPropagation(); onDelete(e, index); }} className="absolute top-1 right-1 bg-red-500/90 text-white p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-opacity z-30 cursor-pointer shadow-sm"><Icons.Trash /></button>
+                </div>
+            );
+        }, (prev, next) => prev.slide.html === next.slide.html && prev.isActive === next.isActive && prev.index === next.index && prev.isDragging === next.isDragging);
+
+        function App() {
+            const [user, setUser] = React.useState(() => {
+                try {
+                    const val = localStorage.getItem('sc_user');
+                    if (!val) return null;
+                    const parsed = JSON.parse(val);
+                    if (parsed && typeof parsed === 'object' && parsed.id) return parsed;
+                    return null;
+                } catch(e) { return null; }
+            });
+            React.useEffect(() => { const l = document.getElementById('loading-text'); if(l) l.style.display = 'none'; }, []);
+            const handleLogin = (uData) => { localStorage.setItem('sc_user', JSON.stringify(uData)); setUser(uData); };
+            const handleLogout = () => { localStorage.removeItem('sc_user'); setUser(null); };
+            if (!user) return <AuthPage onLogin={handleLogin} />;
+            return <Editor user={user} onLogout={handleLogout} />;
+        }
+
+        function AuthPage({ onLogin }) {
+            const [isReg, setIsReg] = React.useState(false);
+            const [u, setU] = React.useState('');
+            const [p, setP] = React.useState('');
+            const [loading, setLoading] = React.useState(false);
+            const sub = async () => {
+                if(!u || !p) return alert('请输入完整');
+                setLoading(true);
+                try {
+                    if (isReg) { 
+                        await api.register(u, p); 
+                        alert('注册成功'); 
+                        setIsReg(false); 
+                    } else {
+                        const res = await api.login(u, p);
+                        console.log("服务器返回的原始数据:", res); // 👉 这里打印出来
+                        
+                        if (!res || !res.id) { 
+                            // 把 res.error 弹出来，看看是不是密码错误
+                            throw new Error(res?.error || JSON.stringify(res) || "返回为空");
+                        }
+                        onLogin({ username: res.username, id: res.id });
+                    }
+                } catch (e) { 
+                    alert("报错详情: " + e.message); 
+                } finally { 
+                    setLoading(false); 
+                }
+            };
+            return (
+                <div className="flex h-screen items-center justify-center bg-gray-900 text-white w-full">
+                    <div className="bg-gray-800 p-8 rounded-2xl shadow-2xl w-full max-w-sm border border-gray-700">
+                        <div className="text-center mb-8">
+                            <div className="w-16 h-16 bg-indigo-600/20 rounded-full flex items-center justify-center mx-auto mb-4"><Icons.Slideshow /></div>
+                            <h2 className="text-2xl font-bold">SlideCraft Pro</h2>
+                            <p className="text-gray-400 text-sm mt-1">{isReg ? '创建新账户' : '欢迎回来'}</p>
+                        </div>
+                        <input value={u} onChange={e=>setU(e.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 mb-3 text-white focus:border-indigo-500 outline-none" placeholder="用户名" />
+                        <input type="password" value={p} onChange={e=>setP(e.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 mb-6 text-white focus:border-indigo-500 outline-none" placeholder="密码" />
+                        <button onClick={sub} disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-700 py-3 rounded-lg font-bold transition-colors disabled:opacity-50 flex items-center justify-center gap-2">{loading && <span className="animate-spin">⌛</span>}{isReg ? '注册' : '登录'}</button>
+                        <div className="mt-6 text-center text-sm text-gray-400 cursor-pointer hover:text-indigo-400" onClick={()=>setIsReg(!isReg)}>{isReg ? '已有账号？登录' : '没有账号？注册'}</div>
+                    </div>
+                </div>
+            );
+        }
+
+        function Editor({ user, onLogout }) {
+            const [view, setView] = React.useState('dashboard');
+            const [currId, setCurrId] = React.useState(null);
+            const [projects, setProjects] = React.useState([]);
+            const [slides, setSlides] = React.useState([]);
+            const [title, setTitle] = React.useState('');
+            const [activeIdx, setActiveIdx] = React.useState(0);
+            const [code, setCode] = React.useState(''); 
+            const [previewHtml, setPreviewHtml] = React.useState('');
+            const [showCode, setShowCode] = React.useState(true);
+            const [status, setStatus] = React.useState('idle'); 
+            const [editorH, setEditorH] = React.useState(300);
+            const [isDragging, setIsDragging] = React.useState(false);
+            const [scale, setScale] = React.useState(0.5); 
+            const [pos, setPos] = React.useState({ left: '50%', top: '50%' });
+            const [draggedItem, setDraggedItem] = React.useState(null);
+            
+            // 演示模式状态
+            const [isPresenting, setIsPresenting] = React.useState(false);
+            const [presScale, setPresScale] = React.useState(1);
+            
+            // 编辑模式状态
+            const [isVisualMode, setIsVisualMode] = React.useState(false);
+            const [selectedElement, setSelectedElement] = React.useState(null);
+
+            // 🔥 自定义密码弹窗状态 🔥
+            const [showPwdModal, setShowPwdModal] = React.useState(false);
+            const [pwdCallback, setPwdCallback] = React.useState(null); // 存储验证成功后要执行的操作
+            const [inputPwd, setInputPwd] = React.useState('');
+            
+            const stageRef = React.useRef(null);
+            const fileRef = React.useRef(null);
+            const iframeRef = React.useRef(null);
+            const timerRef = React.useRef(null);
+            const lastWheelTime = React.useRef(0);
+
+            const loadProjs = React.useCallback(() => { 
+                if (!user || !user.id) { setStatus('idle'); return; }
+                setStatus('loading'); api.getProjects(user.id).then(setProjects).catch(e => { console.error(e); setProjects([]); }).finally(() => setStatus('idle')); 
+            }, [user]);
+            const createProj = async () => { if (!user || !user.id) { alert("登录过期"); onLogout(); return; } const t = prompt("标题:", "未命名 PPT"); if (!t) return; try { const res = await api.createProject(user.id, t); openProj(res.id); } catch(e) { alert(e.message); } };
+            const openProj = (id) => {
+                setCurrId(id);
+                api.getProjectDetails(id).then(d => {
+                    const s = (d.slides && d.slides.length) ? d.slides : DEFAULT_SLIDES;
+                    setSlides(s); setTitle(d.title); setCode(s[0].html); setPreviewHtml(s[0].html); setActiveIdx(0); setStatus('saved'); setView('editor');
+                }).catch(e => { alert(e.message); setView('dashboard'); });
+            };
+            
+            // 🔥 请求密码验证通用函数 🔥
+            const requestPassword = (actionCallback) => {
+                setPwdCallback(() => actionCallback); // 存储回调
+                setInputPwd(''); // 清空上次输入
+                setShowPwdModal(true); // 显示弹窗
+            };
+
+            // 🔥 确认密码逻辑 🔥
+            const confirmPassword = () => {
+                if (inputPwd === '526') {
+                    if (pwdCallback) pwdCallback(); // 执行操作
+                    setShowPwdModal(false);
+                } else {
+                    alert('密码错误');
+                    setInputPwd('');
+                }
+            };
+
+            const delProj = (e, id) => { 
+                e.stopPropagation(); 
+                requestPassword(async () => {
+                    await api.deleteProject(id); 
+                    loadProjs(); 
+                });
+            };
+
+            React.useEffect(() => { if (view === 'dashboard') loadProjs(); }, [view, loadProjs]);
+
+            const onCodeChange = (e) => {
+                const val = e.target.value; setCode(val);
+                if (timerRef.current) clearTimeout(timerRef.current);
+                timerRef.current = setTimeout(() => {
+                    setPreviewHtml(val);
+                    setSlides(prev => {
+                        const n = [...prev]; n[activeIdx] = { ...n[activeIdx], html: val };
+                        setStatus('saving'); api.saveProject(currId, n, title).then(()=>setStatus('saved')).catch(()=>setStatus('error'));
+                        return n;
+                    });
+                }, 500); 
+            };
+
+            const updateSlideFromVisual = (newHtml) => {
+                // 收到 iframe 传回的 HTML
+                setCode(newHtml);
+                setPreviewHtml(newHtml);
+                setSlides(prev => {
+                    const n = [...prev]; n[activeIdx] = { ...n[activeIdx], html: newHtml };
+                    setStatus('saving'); 
+                    api.saveProject(currId, n, title).then(()=>setStatus('saved')).catch(()=>setStatus('error'));
+                    return n;
+                });
+            };
+
+            const switchSlide = (i) => { 
+                if (i < 0 || i >= slides.length) return; 
+                // 切换幻灯片时关闭编辑模式，防止状态错乱
+                if (isVisualMode) toggleVisualMode();
+                setActiveIdx(i); setCode(slides[i].html); setPreviewHtml(slides[i].html); 
+            };
+            
+            const handleWheel = (e) => {
+                // 编辑模式下禁用滚轮切页，防止误触
+                if (isVisualMode) return;
+                const now = Date.now();
+                if (now - lastWheelTime.current < 60) return;
+                if (Math.abs(e.deltaY) > 20) {
+                    if (e.deltaY > 0) { if (activeIdx < slides.length - 1) { switchSlide(activeIdx + 1); lastWheelTime.current = now; } } 
+                    else { if (activeIdx > 0) { switchSlide(activeIdx - 1); lastWheelTime.current = now; } }
+                }
+            };
+
+            const handleDragStart = (e, index) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", index); setDraggedItem(index); };
+            const handleDragOver = (e, index) => { e.preventDefault(); };
+            const handleDrop = (e, dropIndex) => { e.preventDefault(); const dragIndex = parseInt(e.dataTransfer.getData("text/plain")); if (dragIndex === dropIndex) { setDraggedItem(null); return; } setSlides(prev => { const newSlides = [...prev]; const [removed] = newSlides.splice(dragIndex, 1); newSlides.splice(dropIndex, 0, removed); api.saveProject(currId, newSlides, title); let newActiveIdx = activeIdx; if (activeIdx === dragIndex) newActiveIdx = dropIndex; else if (activeIdx > dragIndex && activeIdx <= dropIndex) newActiveIdx = activeIdx - 1; else if (activeIdx < dragIndex && activeIdx >= dropIndex) newActiveIdx = activeIdx + 1; setActiveIdx(newActiveIdx); return newSlides; }); setDraggedItem(null); };
+            
+            const calcFit = React.useCallback(() => { if (!stageRef.current) return; const { clientWidth: cw, clientHeight: ch } = stageRef.current; const p = 40; const s = Math.min((cw - p) / 1344, (ch - p) / 816); setScale(Math.max(0.1, s)); }, []);
+            React.useEffect(() => { if (view === 'editor') { calcFit(); window.addEventListener('resize', calcFit); } return () => window.removeEventListener('resize', calcFit); }, [calcFit, view, editorH]);
+            const startDrag = (e) => { setIsDragging(true); e.preventDefault(); };
+            React.useEffect(() => { const mv = (e) => { if (isDragging) { const h = window.innerHeight - e.clientY; if(h>100 && h<window.innerHeight-100) setEditorH(h); }}; const up = () => { setIsDragging(false); }; if(isDragging) { window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up); } return () => { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); }; }, [isDragging]);
+            const addSlide = () => { setSlides(prev => { const n = [...prev, {id: Date.now(), html: DEFAULT_SLIDES[0].html}]; api.saveProject(currId, n, title); setTimeout(() => switchSlide(n.length - 1), 50); return n; }); };
+            
+            const delSlide = (e, i) => { 
+                e.stopPropagation(); 
+                requestPassword(() => {
+                    setSlides(prev => { 
+                        if(prev.length <= 1) { alert('至少保留一页'); return prev; } 
+                        const n = prev.filter((_, x) => x !== i); 
+                        api.saveProject(currId, n, title); 
+                        if (i === activeIdx) switchSlide(Math.max(0, i - 1)); 
+                        else if (i < activeIdx) setActiveIdx(activeIdx - 1); 
+                        return n; 
+                    }); 
+                });
+            };
+            
+            const uploadImg = async (e) => { const f = e.target.files[0]; if (!f) return; try { const url = await api.uploadImage(f); const tag = `\n<img src="${url}" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-64 h-auto rounded shadow-lg object-cover" />\n`; const n = code + tag; setCode(n); setPreviewHtml(n); setSlides(prev => { const ns = [...prev]; ns[activeIdx] = { ...ns[activeIdx], html: n }; api.saveProject(currId, ns, title); return ns; }); } catch (e) { alert(e.message); } e.target.value = ''; };
+
+            // 🔥 演示模式逻辑 🔥
+            const enterPresentation = () => {
+                if(isVisualMode) toggleVisualMode(); // 关闭编辑模式
+                setIsPresenting(true);
+                const s = Math.min(window.innerWidth / 1344, window.innerHeight / 816);
+                setPresScale(s);
+                const elem = document.documentElement;
+                if (elem.requestFullscreen) { elem.requestFullscreen().catch(()=>{}); }
+            };
+
+            const exitPresentation = React.useCallback(() => {
+                setIsPresenting(false);
+                if (document.exitFullscreen && document.fullscreenElement) { document.exitFullscreen().catch(()=>{}); }
+            }, []);
+            
+            // 🔥🔥🔥 核心修复：智能 iframe 事件转发器 🔥🔥🔥
+            // 如果鼠标下的元素（或其父级）是可滚动的容器，则完全拦截滚轮事件，禁止冒泡到 PPT 切换
+            // 无论是否滚动到底部，只要在滚动容器内，就禁止切页
+            const setupSmartScroll = (iframe) => {
+                try {
+                    const win = iframe.contentWindow;
+                    if (!win) return;
+                    
+                    // 递归检查元素是否是“滚动容器”
+                    const isScrollContainer = (el) => {
+                        // 到了 body 就停止
+                        if (!el || el === win.document.body || el === win.document.documentElement) return false;
+                        
+                        const style = win.getComputedStyle(el);
+                        // 判断 overflow 属性
+                        const isOverflow = (style.overflowY === 'auto' || style.overflowY === 'scroll');
+                        // 判断内容是否真的溢出（内容高度大于容器高度）
+                        const hasScrollableContent = el.scrollHeight > el.clientHeight;
+
+                        // 只要具备滚动能力，就视为滚动容器，无论当前滚动到了哪里
+                        if (isOverflow && hasScrollableContent) {
+                            return true;
+                        }
+                        
+                        // 递归检查父级
+                        return isScrollContainer(el.parentElement);
+                    };
+
+                    win.addEventListener('wheel', (event) => {
+                        // 1. 检查鼠标是否悬停在某个可滚动的容器上
+                        if (isScrollContainer(event.target)) {
+                            // 如果是，阻止事件冒泡到可能的父级监听器，
+                            // 并不执行下面的 dispatchEvent，从而“捕获”滚动在 iframe 内部
+                            event.stopPropagation();
+                            // 注意：这里不要 preventDefault()，否则 iframe 内部的内容就没法滚动了
+                            return; 
+                        }
+
+                        // 2. 如果不在滚动容器内（例如在背景上），则转发给父级切换 PPT
+                        event.preventDefault(); // 阻止 iframe 默认行为
+                        
+                        const newEvent = new WheelEvent('wheel', {
+                            deltaY: event.deltaY,
+                            bubbles: true,
+                            cancelable: true,
+                            view: window
+                        });
+                        window.dispatchEvent(newEvent);
+                    }, { passive: false });
+
+                    // 键盘事件转发保持不变
+                    win.addEventListener('keydown', (event) => {
+                        // 🔥 修复：如果在编辑文本，不要拦截按键，也不要转发给父级 🔥
+                        if (event.target.isContentEditable || event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
+                            return; 
+                        }
+
+                        const newEvent = new KeyboardEvent('keydown', {
+                            key: event.key, code: event.code, keyCode: event.keyCode,
+                            bubbles: true, cancelable: true, view: window
+                        });
+                        window.dispatchEvent(newEvent); 
+                        if (['ArrowRight', 'ArrowDown', ' ', 'Enter', 'PageDown', 'ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace', 'Escape'].includes(event.key)) {
+                             event.preventDefault();
+                        }
+                    });
+
+                } catch (err) { console.warn("Iframe setup failed", err); }
+            };
+
+            const handlePresIframeLoad = (e) => {
+                setupSmartScroll(e.target);
+            };
+
+            React.useEffect(() => {
+                if (!isPresenting) return;
+                const handleKey = (e) => {
+                    if (['ArrowRight', 'ArrowDown', ' ', 'Enter', 'PageDown'].includes(e.key)) { switchSlide(Math.min(slides.length - 1, activeIdx + 1)); } 
+                    else if (['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace'].includes(e.key)) { switchSlide(Math.max(0, activeIdx - 1)); } 
+                    else if (e.key === 'Escape') { exitPresentation(); }
+                };
+                const handlePresWheel = (e) => {
+                    const now = Date.now();
+                    if (now - lastWheelTime.current < 250) return;
+                    if (Math.abs(e.deltaY) > 20) {
+                        if (e.deltaY > 0) { if (activeIdx < slides.length - 1) { switchSlide(activeIdx + 1); lastWheelTime.current = now; } } 
+                        else { if (activeIdx > 0) { switchSlide(activeIdx - 1); lastWheelTime.current = now; } }
+                    }
+                };
+                window.addEventListener('keydown', handleKey);
+                window.addEventListener('wheel', handlePresWheel);
+                const handleResize = () => { setPresScale(Math.min(window.innerWidth / 1344, window.innerHeight / 816)); };
+                window.addEventListener('resize', handleResize);
+                return () => { window.removeEventListener('keydown', handleKey); window.removeEventListener('wheel', handlePresWheel); window.removeEventListener('resize', handleResize); };
+            }, [isPresenting, activeIdx, slides.length, exitPresentation]);
+
+            // 🔥 编辑模式逻辑 🔥
+            const toggleVisualMode = () => {
+                const newState = !isVisualMode;
+                setIsVisualMode(newState);
+                setSelectedElement(null);
+                
+                const win = iframeRef.current?.contentWindow;
+                if (win) {
+                    if (newState) {
+                        if (win.enableVisual) win.enableVisual();
+                    } else {
+                        if (win.disableVisual) win.disableVisual();
+                    }
+                }
+            };
+
+            // 监听 iframe 消息
+            React.useEffect(() => {
+                const handler = (e) => {
+                    if (e.data.type === 'ELEMENT_SELECTED') {
+                        setSelectedElement(e.data.payload);
+                    } else if (e.data.type === 'SELECTION_CLEARED') {
+                        setSelectedElement(null);
+                    } else if (e.data.type === 'CODE_UPDATE') {
+                        updateSlideFromVisual(e.data.payload);
+                    }
+                };
+                window.addEventListener('message', handler);
+                return () => window.removeEventListener('message', handler);
+            }, [activeIdx, slides, currId]);
+            
+            // 每次 slide 切换重置 iframe 的编辑状态 (因为 srcDoc 会重置)
+            const handleEditorLoad = () => {
+                // 应用智能滚动逻辑到编辑器，这样在编辑器里也可以滚动内容而不切页
+                if (iframeRef.current) {
+                    setupSmartScroll(iframeRef.current);
+                }
+
+                if (isVisualMode && iframeRef.current?.contentWindow?.enableVisual) {
+                    iframeRef.current.contentWindow.enableVisual();
+                }
+            };
+
+            const execVisualCmd = (key, val) => {
+                iframeRef.current?.contentWindow?.updateSelectedStyle(key, val);
+            };
+
+            const StatusTag = () => { const st = { exporting: {bg:'rgba(59,130,246,0.2)', c:'#60a5fa', t: '导出中'}, saving: {bg:'rgba(234,179,8,0.2)', c:'#facc15', t:'保存中'}, error: {bg:'rgba(239,68,68,0.2)', c:'#f87171', t:'未保存'}, saved: {bg:'rgba(34,197,94,0.2)', c:'#4ade80', t:'已保存'} }[status] || {bg:'transparent', c:'transparent', t:''}; return <span style={{padding:'2px 8px', borderRadius:'4px', background:st.bg, color:st.c, fontSize:'0.75rem', whiteSpace:'nowrap'}}>{st.t}</span>; };
+
+            if (view === 'dashboard') {
+                return (
+                    <div style={{ height: '100%', width: '100%', overflowY: 'auto', padding: '40px', background: '#111827' }}>
+                        <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+                                <h1 style={{ fontSize: '1.875rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '12px' }}><span style={{ color: '#6366f1' }}><Icons.Slideshow /></span> 我的演示文稿</h1>
+                                <div style={{ display: 'flex', gap: '16px' }}>
+                                    <button onClick={onLogout} style={{ color: '#9ca3af', display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', background: '#1f2937', border: 'none', borderRadius: '4px', cursor: 'pointer' }}><Icons.SignOut /> 退出</button>
+                                    <button onClick={createProj} style={{ background: '#4f46e5', color: 'white', padding: '8px 24px', borderRadius: '8px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px', border: 'none', cursor: 'pointer' }}><Icons.Plus /> 新建 PPT</button>
+                                </div>
+                            </div>
+                            {/* 🔥 密码弹窗渲染 🔥 */}
+                            {showPwdModal && (
+                                <div style={{position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.5)', zIndex:99999, display:'flex', alignItems:'center', justifyContent:'center', backdropFilter:'blur(4px)'}}>
+                                    <div style={{background:'#1f2937', padding:'24px', borderRadius:'12px', boxShadow:'0 25px 50px -12px rgba(0, 0, 0, 0.5)', border:'1px solid #374151', width:'320px'}}>
+                                        <h3 style={{fontSize:'1.25rem', fontWeight:'bold', marginBottom:'16px', color:'white'}}>安全验证</h3>
+                                        <p style={{color:'#9ca3af', fontSize:'0.875rem', marginBottom:'16px'}}>此操作需要密码确认 (三位)</p>
+                                        <input
+                                            type="password"
+                                            autoFocus
+                                            value={inputPwd}
+                                            onChange={(e) => setInputPwd(e.target.value)}
+                                            style={{width:'100%', background:'#111827', border:'1px solid #374151', borderRadius:'6px', padding:'8px 12px', color:'white', marginBottom:'16px', outline:'none'}}
+                                            placeholder="请输入密码"
+                                            onKeyDown={(e) => { if (e.key === 'Enter') confirmPassword(); }}
+                                        />
+                                        <div style={{display:'flex', justifyContent:'flex-end', gap:'12px'}}>
+                                            <button onClick={() => setShowPwdModal(false)} style={{padding:'6px 16px', borderRadius:'6px', background:'none', color:'#d1d5db', cursor:'pointer', border:'none'}}>取消</button>
+                                            <button onClick={confirmPassword} style={{padding:'6px 16px', borderRadius:'6px', background:'#4f46e5', color:'white', fontWeight:'bold', cursor:'pointer', border:'none'}}>确认</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {status === 'loading' ? <div style={{ textAlign: 'center', color: '#6b7280', padding: '80px' }}>加载中...</div> : (
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '24px' }}>
+                                    {projects.map(p => (
+                                        <div key={p.id} onClick={() => openProj(p.id)} style={{ background: '#1f2937', borderRadius: '12px', border: '1px solid #374151', cursor: 'pointer', overflow: 'hidden', aspectRatio: '4/3', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+                                            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#374151', fontSize: '3rem' }}><Icons.Presentation /></div>
+                                            <div style={{ padding: '16px', borderTop: '1px solid #374151', background: '#111827' }}><h3 style={{ fontWeight: 'bold', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.title}</h3><p style={{ fontSize: '0.75rem', color: '#6b7280', margin: '4px 0 0' }}>{new Date(p.updated_at).toLocaleDateString()}</p></div>
+                                            <button onClick={(e) => delProj(e, p.id)} style={{ position: 'absolute', top: '8px', right: '8px', padding: '8px', background: '#ef4444', color: 'white', borderRadius: '4px', border: 'none', cursor: 'pointer' }}><Icons.Trash /></button>
+                                        </div>
+                                    ))}
+                                    {projects.length === 0 && <div onClick={createProj} style={{ border: '2px dashed #374151', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#6b7280', cursor: 'pointer', aspectRatio: '4/3' }}><Icons.Plus /><span style={{ marginTop: '8px' }}>新建项目</span></div>}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="app-layout">
+                    {/* 🔥 演示模式全屏覆盖层 🔥 */}
+                    {isPresenting && (
+                        <div className="presentation-overlay">
+                            <div style={{ width: '1344px', height: '816px', transform: `scale(${presScale})`, transformOrigin: 'center', background: 'white', position: 'relative', boxShadow: '0 0 50px rgba(0,0,0,0.5)' }}>
+                                <iframe 
+                                    srcDoc={injectPreview(slides[activeIdx].html)} 
+                                    style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+                                    onLoad={handlePresIframeLoad} // 🔥 这里使用了智能事件转发 🔥
+                                ></iframe>
+                            </div>
+                            <button onClick={(e) => { e.stopPropagation(); exitPresentation(); }} style={{ position: 'absolute', top: '20px', right: '20px', background: 'rgba(255,255,255,0.1)', color: 'white', border: 'none', borderRadius: '50%', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', zIndex: 10000 }} title="退出演示 (ESC)"><Icons.X /></button>
+                            <div style={{ position: 'absolute', bottom: '20px', left: '20px', color: 'rgba(255,255,255,0.5)', fontFamily: 'monospace', fontSize: '14px', pointerEvents: 'none' }}>{activeIdx + 1} / {slides.length}</div>
+                        </div>
+                    )}
+
+                    {/* 🔥 全局密码弹窗 (覆盖在 app-layout 之上) 🔥 */}
+                    {showPwdModal && (
+                        <div style={{position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.5)', zIndex:99999, display:'flex', alignItems:'center', justifyContent:'center', backdropFilter:'blur(4px)'}}>
+                            <div style={{background:'#1f2937', padding:'24px', borderRadius:'12px', boxShadow:'0 25px 50px -12px rgba(0, 0, 0, 0.5)', border:'1px solid #374151', width:'320px'}}>
+                                <h3 style={{fontSize:'1.25rem', fontWeight:'bold', marginBottom:'16px', color:'white'}}>安全验证</h3>
+                                <p style={{color:'#9ca3af', fontSize:'0.875rem', marginBottom:'16px'}}>此操作需要密码确认 (三位)</p>
+                                <input
+                                    type="password"
+                                    autoFocus
+                                    value={inputPwd}
+                                    onChange={(e) => setInputPwd(e.target.value)}
+                                    style={{width:'100%', background:'#111827', border:'1px solid #374151', borderRadius:'6px', padding:'8px 12px', color:'white', marginBottom:'16px', outline:'none'}}
+                                    placeholder="请输入密码"
+                                    onKeyDown={(e) => { if (e.key === 'Enter') confirmPassword(); }}
+                                />
+                                <div style={{display:'flex', justifyContent:'flex-end', gap:'12px'}}>
+                                    <button onClick={() => setShowPwdModal(false)} style={{padding:'6px 16px', borderRadius:'6px', background:'none', color:'#d1d5db', cursor:'pointer', border:'none'}}>取消</button>
+                                    <button onClick={confirmPassword} style={{padding:'6px 16px', borderRadius:'6px', background:'#4f46e5', color:'white', fontWeight:'bold', cursor:'pointer', border:'none'}}>确认</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="sidebar-left">
+                        <div style={{ padding: '16px', borderBottom: '1px solid #374151', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <button onClick={()=>setView('dashboard')} style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 'bold' }}><Icons.Back /> 返回</button>
+                            {/* 🔥 编辑按钮 🔥 */}
+                            <div style={{display:'flex', gap:'8px'}}>
+                                <button onClick={toggleVisualMode} style={{ color: isVisualMode ? '#6366f1' : '#9ca3af', background: isVisualMode ? 'rgba(99,102,241,0.1)' : 'transparent', padding:'6px', borderRadius:'6px', border: '1px solid ' + (isVisualMode ? '#6366f1' : 'transparent'), cursor: 'pointer', display: 'flex', alignItems: 'center' }} title="可视化编辑">
+                                    <Icons.Edit />
+                                </button>
+                                <button onClick={enterPresentation} style={{ color: '#ffffff', background: '#4f46e5', padding:'6px 12px', borderRadius:'6px', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 'bold', fontSize: '0.9rem' }} title="开始演示">
+                                    <Icons.Play /> 演示
+                                </button>
+                            </div>
+                        </div>
+                        <div style={{ flex: 1, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            {slides.map((s, i) => (
+                                <SlideThumbnail key={s.id} slide={s} index={i} isActive={activeIdx === i} onClick={switchSlide} onDelete={delSlide} onDragStart={handleDragStart} onDragOver={handleDragOver} onDrop={handleDrop} isDragging={draggedItem === i} />
+                            ))}
+                            <button onClick={addSlide} style={{ width: '100%', padding: '12px', border: '2px dashed #374151', borderRadius: '8px', color: '#6b7280', background: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}><Icons.Plus /> 新建页面</button>
+                        </div>
+                    </div>
+                    <div className="main-workspace">
+                        <div style={{ height: '48px', background: '#1f2937', borderBottom: '1px solid #374151', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 16px', flexShrink: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                                <input value={title} onChange={(e) => setTitle(e.target.value)} style={{ background: 'transparent', border: 'none', color: 'white', fontWeight: 'bold', width: '200px', fontSize: '1rem', outline: 'none' }} />
+                                <StatusTag />
+                            </div>
+                            <button onClick={()=>setShowCode(!showCode)} style={{ padding: '6px 12px', background: '#374151', color: '#d1d5db', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: '4px' }}><Icons.Code /> {showCode?'隐藏':'代码'}</button>
+                        </div>
+                        <div className="stage-container" ref={stageRef} onWheel={handleWheel}>
+                            {/* 🔥 悬浮工具栏 🔥 */}
+                            {isVisualMode && selectedElement && (
+                                <div className="visual-toolbar">
+                                    <span style={{fontSize:'0.8rem', color:'#9ca3af', marginRight:'8px'}}>{selectedElement.tagName.toLowerCase()}</span>
+                                    
+                                    <button className="tool-btn" onClick={() => execVisualCmd('editText')} title="编辑文字"><Icons.Type /></button>
+                                    <div className="tool-divider"></div>
+
+                                    <button className="tool-btn" onClick={() => execVisualCmd('fontSize', 'up')} title="增大字号"><Icons.FontUp /></button>
+                                    <button className="tool-btn" onClick={() => execVisualCmd('fontSize', 'down')} title="减小字号"><Icons.FontDown /></button>
+                                    
+                                    <div className="tool-divider"></div>
+                                    <button className="tool-btn" onClick={() => execVisualCmd('bold')} title="加粗"><Icons.Bold /></button>
+                                    <button className="tool-btn" onClick={() => execVisualCmd('italic')} title="斜体"><Icons.Italic /></button>
+                                    <button className="tool-btn" onClick={() => execVisualCmd('underline')} title="下划线"><Icons.Underline /></button>
+
+                                    <div className="tool-divider"></div>
+                                    <input type="color" value={selectedElement.color || '#000000'} onChange={(e) => execVisualCmd('color', e.target.value)} style={{width:'32px', height:'32px', padding:0, border:'none', background:'none', cursor:'pointer'}} title="文字颜色" />
+                                    <div className="tool-divider"></div>
+                                    <button className="tool-btn" onClick={() => execVisualCmd('delete', null)} style={{color:'#ef4444'}} title="删除元素"><Icons.Trash /></button>
+                                </div>
+                            )}
+
+                            <div className="stage-content" style={{ transform: `translate(-50%, -50%) scale(${scale})`, left: pos.left, top: pos.top }}>
+                                <iframe 
+                                    ref={iframeRef}
+                                    srcDoc={injectPreview(previewHtml, true)} 
+                                    style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+                                    onLoad={handleEditorLoad}
+                                ></iframe>
+                            </div>
+                        </div>
+                        {showCode && (
+                            <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0, height: editorH, borderTop: '1px solid #374151' }}>
+                                <div className={`resizer ${isDragging ? 'active' : ''}`} onMouseDown={startDrag}></div>
+                                <div style={{ flex: 1, background: '#0d1117', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                                    <div style={{ padding: '8px 16px', background: '#161b22', borderBottom: '1px solid #374151', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', color: '#9ca3af' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                                            <span style={{ fontWeight: 'bold' }}>HTML Editor</span>
+                                            <button onClick={() => fileRef.current.click()} style={{ color: '#818cf8', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}><Icons.Image /> 图片</button>
+                                            <input type="file" ref={fileRef} onChange={uploadImg} style={{ display: 'none' }} accept="image/*" />
+                                        </div>
+                                        <button onClick={()=>setShowCode(false)} style={{ color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer' }}><Icons.X /></button>
+                                    </div>
+                                    <textarea id="code-editor" value={code} onChange={onCodeChange} style={{ flex: 1, background: '#0d1117', color: '#d1d5db', padding: '16px', border: 'none', fontFamily: 'monospace', fontSize: '0.875rem', lineHeight: '1.5', resize: 'none', outline: 'none' }} spellCheck="false"></textarea>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
