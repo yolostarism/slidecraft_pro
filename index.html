@@ -409,36 +409,37 @@
             const resetStyle = `<style id="sc-preview-reset"> 
                 :root { color-scheme: light; }
                 
-                /* 1. 强制所有元素计算内边距，防止 padding 撑大容器 */
+                /* 1. 基础重置，确保边界不被撑大 */
                 * { 
                     box-sizing: border-box !important; 
                     forced-color-adjust: none !important; 
                     -webkit-print-color-adjust: exact !important; 
                     print-color-adjust: exact !important; 
+                    /* 🌟 防溢出核心1：允许内容在极度拥挤时收缩 */
+                    min-width: 0;
+                    min-height: 0;
                 } 
                 
-                /* 2. 锁定画布尺寸，设置大字号基准，强制切除溢出部分 */
+                /* 2. 严格锁定物理画布尺寸，杜绝外部滚动条 */
                 body, html { 
                     margin: 0 !important; 
                     padding: 0 !important; 
                     width: 1344px !important; 
                     height: 816px !important; 
-                    overflow: hidden !important; /* 关键：画布外的内容直接切掉 */
+                    max-width: 1344px !important; 
+                    max-height: 816px !important; 
+                    overflow: hidden !important; /* 强制切掉画布外的内容 */
                     background: none !important; 
                     display: block !important; 
-                    min-height: 0 !important; 
-                    font-size: 24px !important; /* 🌟 关键：将默认 16px 字号提升到 24px，防止 AI 漏写字号时文字像蚂蚁 */
-                    line-height: 1.6 !important; 
-                    color: #1f2937; /* 给一个默认的深灰文字颜色 */
                 } 
                 
-                /* 3. 强制最外层容器填满画布，且不能超出 */
+                /* 3. 根节点防护：确保背景、外层容器绝不越界 */
                 body > div, .ppt-slide, .slide { 
                     width: 100% !important; 
                     height: 100% !important; 
-                    max-width: 100vw !important; 
-                    max-height: 100vh !important;
-                    overflow: hidden !important; /* 🌟 关键：防止内部元素（如长文本）把外层 div 撑高导致滚动条 */
+                    max-width: 1344px !important; 
+                    max-height: 816px !important; 
+                    overflow: hidden !important; /* 🌟 防溢出核心2：防止内部长文本/大图把父元素撑破 */
                     border-radius: 0 !important; 
                     box-shadow: none !important; 
                     aspect-ratio: auto !important; 
@@ -446,16 +447,22 @@
                     transform: none !important; 
                     left: auto !important; 
                     top: auto !important; 
-                    min-height: 0 !important; 
                 } 
 
-                /* 4. 🌟 关键新增：防止 AI 插入的大图片撑爆页面 */
-                img {
+                /* 4. 🌟 防溢出核心3：限制图片尺寸，防止巨型网图破坏布局 */
+                img, svg, video {
                     max-width: 100% !important;
                     max-height: 100% !important;
-                    object-fit: cover !important; /* 保持比例裁剪，或者用 contain 保持完整 */
+                    /* 不加 object-fit: cover，尊重 AI 可能会写的 object-contain 等属性 */
+                }
+
+                /* 5. 🌟 防溢出核心4：防止超长英文/链接不换行导致横向溢出 */
+                p, h1, h2, h3, h4, h5, h6, span, div {
+                    word-wrap: break-word !important;
+                    overflow-wrap: break-word !important;
                 }
             </style>`;
+
 
                 let content = html;
                 if (html.includes('<' + '/head>')) content = content.replace('<' + '/head>', resetStyle + '<' + '/head>');
