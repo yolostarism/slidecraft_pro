@@ -900,7 +900,7 @@
                         userMessage: aiPrompt
                     };
 
-                    // 这里调用你的后端接口，后端去请求 DeepSeek
+                    // 这里调用你的后端接口，后端去请求 DeepSeek 的 API
                     const response = await fetch(SERVER_URL + '/generate-slide', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
