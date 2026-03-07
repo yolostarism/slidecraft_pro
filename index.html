@@ -1477,8 +1477,23 @@ const handleEditorLoad = () => {
                                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', padding: '16px', background: '#1f2937', borderRadius: '8px', border: '1px solid #374151' }}>
                                         <button className="tool-btn" onClick={() => execVisualCmd('editText')} title="编辑文字"><Icons.Type /></button>
                                         <div className="tool-divider"></div>
-                                        <button className="tool-btn" onClick={() => execVisualCmd('fontSize', 'up')} title="放大字号"><Icons.FontUp /></button>
-                                        <button className="tool-btn" onClick={() => execVisualCmd('fontSize', 'down')} title="缩小字号"><Icons.FontDown /></button>
+                                        <button
+                                            className="tool-btn"
+                                            onClick={() => execVisualCmd('fontSize', 'up')}
+                                            title="放大字号"
+                                            style={{ fontWeight: 800, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace' }}
+                                            >
+                                            A+
+                                        </button>
+
+                                        <button
+                                            className="tool-btn"
+                                            onClick={() => execVisualCmd('fontSize', 'down')}
+                                            title="缩小字号"
+                                            style={{ fontWeight: 800, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace' }}
+                                            >
+                                            A-
+                                        </button>
                                         <div className="tool-divider"></div>
                                         <button className="tool-btn" onClick={() => execVisualCmd('bold')} title="加粗"><Icons.Bold /></button>
                                         <button className="tool-btn" onClick={() => execVisualCmd('italic')} title="斜体"><Icons.Italic /></button>
