@@ -787,6 +787,10 @@
             const [pwdCallback, setPwdCallback] = React.useState(null); // 存储验证成功后要执行的操作
             const [inputPwd, setInputPwd] = React.useState('');
             const [cursorPos, setCursorPos] = React.useState(null);
+
+            // AI 相关的状态
+            const [aiPrompt, setAiPrompt] = React.useState('');
+            const [isAiGenerating, setIsAiGenerating] = React.useState(false);
             
             
             const stageRef = React.useRef(null);
@@ -881,6 +885,44 @@
                         setHasUnsavedChanges(true); setStatus('idle'); return n;
                     });
                 }, 500); 
+            };
+
+            
+            const handleAiSubmit = async () => {
+                if (!aiPrompt.trim()) return;
+                setIsAiGenerating(true);
+
+                try {
+                    // 构建发给后端的上下文
+                    const context = {
+                        currentHtml: slides[activeIdx].html,
+                        selectedTagName: selectedElement ? selectedElement.tagName : '无',
+                        userMessage: aiPrompt
+                    };
+
+                    // 这里调用你的后端接口，后端去请求 DeepSeek
+                    const response = await fetch(SERVER_URL + '/generate-slide', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(context)
+                    });
+
+                    if (!response.ok) {
+                        const err = await response.json();
+                        throw new Error(err.error || '生成失败');
+                    }
+
+                    const data = await response.json();
+
+                    // 把 DeepSeek 返回的新 HTML 更新到画布
+                    updateSlideFromVisual(data.newHtml);
+                    setAiPrompt('');
+
+                } catch (error) {
+                    alert("AI 生成出错: " + error.message);
+                } finally {
+                    setIsAiGenerating(false);
+                }
             };
 
             const updateSlideFromVisual = (newHtml) => {
@@ -1477,23 +1519,8 @@ const handleEditorLoad = () => {
                                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', padding: '16px', background: '#1f2937', borderRadius: '8px', border: '1px solid #374151' }}>
                                         <button className="tool-btn" onClick={() => execVisualCmd('editText')} title="编辑文字"><Icons.Type /></button>
                                         <div className="tool-divider"></div>
-                                        <button
-                                            className="tool-btn"
-                                            onClick={() => execVisualCmd('fontSize', 'up')}
-                                            title="放大字号"
-                                            style={{ fontWeight: 800, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace' }}
-                                            >
-                                            A+
-                                        </button>
-
-                                        <button
-                                            className="tool-btn"
-                                            onClick={() => execVisualCmd('fontSize', 'down')}
-                                            title="缩小字号"
-                                            style={{ fontWeight: 800, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace' }}
-                                            >
-                                            A-
-                                        </button>
+                                        <button className="tool-btn" onClick={() => execVisualCmd('fontSize', 'up')} title="放大字号"><Icons.FontUp /></button>
+                                        <button className="tool-btn" onClick={() => execVisualCmd('fontSize', 'down')} title="缩小字号"><Icons.FontDown /></button>
                                         <div className="tool-divider"></div>
                                         <button className="tool-btn" onClick={() => execVisualCmd('bold')} title="加粗"><Icons.Bold /></button>
                                         <button className="tool-btn" onClick={() => execVisualCmd('italic')} title="斜体"><Icons.Italic /></button>
@@ -1537,8 +1564,41 @@ const handleEditorLoad = () => {
                                     </div>
                                     <p style={{ fontSize: '0.875rem', lineHeight: '1.6' }}>在左侧画布点击任意元素<br/>即可在此修改其属性</p>
                                     
-                                    <div style={{ marginTop: '40px', padding: '16px', background: '#1f2937', borderRadius: '8px', width: '100%', border: '1px dashed #374151' }}>
-                                        <p style={{ fontSize: '0.875rem', color: '#9ca3af' }}>✨ AI 对话面板准备就绪<br/>(即将接入)</p>
+                                    {/* AI 交互区 */}
+                                    <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', flex: 1, minHeight: '300px' }}>
+                                        <div style={{ flex: 1, overflowY: 'auto', marginBottom: '16px' }}>
+                                            <div style={{ padding: '12px', background: '#374151', borderRadius: '8px', marginBottom: '8px' }}>
+                                                <span style={{ fontSize: '1.2rem' }}>🤖</span> 
+                                                <span style={{ marginLeft: '8px', fontSize: '0.875rem', color: '#e5e7eb' }}>
+                                                    我是 DeepSeek PPT助手！你可以对我说：<br/><br/>
+                                                    👉 “把标题改成蓝色”<br/>
+                                                    👉 “帮我加一个介绍市场规模的模块”<br/>
+                                                    👉 “把背景换成科技风的深色”
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        <div style={{ position: 'relative' }}>
+                                            <textarea 
+                                                value={aiPrompt}
+                                                onChange={(e) => setAiPrompt(e.target.value)}
+                                                placeholder="输入指令让 AI 帮你改 PPT..."
+                                                style={{ width: '100%', height: '100px', background: '#111827', border: '1px solid #374151', borderRadius: '8px', padding: '12px', color: 'white', outline: 'none', resize: 'none', fontSize: '0.875rem' }}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter' && !e.shiftKey) {
+                                                        e.preventDefault();
+                                                        handleAiSubmit();
+                                                    }
+                                                }}
+                                            />
+                                            <button 
+                                                onClick={handleAiSubmit}
+                                                disabled={isAiGenerating}
+                                                style={{ position: 'absolute', right: '12px', bottom: '12px', background: isAiGenerating ? '#4b5563' : '#6366f1', color: 'white', border: 'none', borderRadius: '4px', padding: '6px 12px', cursor: isAiGenerating ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}
+                                            >
+                                                {isAiGenerating ? '✨ 生成中...' : '发送'}
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             )}
