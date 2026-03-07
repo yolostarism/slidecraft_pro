@@ -33,8 +33,15 @@
 
         body, html { margin: 0; padding: 0; background-color: #111827; color: white; overflow: hidden; height: 100%; width: 100%; font-family: system-ui, -apple-system, sans-serif; }
         #root { height: 100%; width: 100%; }
-        
-        .app-layout { display: grid; grid-template-columns: 260px 1fr; grid-template-rows: 100vh; overflow: hidden; width: 100vw; height: 100vh; }
+        .app-layout {
+            display: grid;
+            /* 🌟 关键：从原来的 260px 1fr 改为下面的三列，右边留出 320px 给面板 */
+            grid-template-columns: 260px 1fr 320px; 
+            grid-template-rows: 100vh;
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+        }
         .sidebar-left { background-color: #111827; border-right: 1px solid #374151; display: flex; flex-direction: column; overflow: hidden; height: 100%; }
         .main-workspace { background-color: #1f2937; display: flex; flex-direction: column; overflow: hidden; position: relative; height: 100%; }
         
@@ -174,252 +181,11 @@
         const DEFAULT_SLIDES = [{id: 1, html: `<div style="width:100%;height:100%;background:#0f172a;color:white;display:flex;flex-direction:column;align-items:center;justify-content:center"><h1 style="font-size:3.75rem;font-weight:700">SlideCraft</h1><p style="margin-top:1rem;font-size:1.25rem;opacity:0.8">Ready to create.</p></div>`}];
 
         // 注入可视化编辑器逻辑
-        const VISUAL_SCRIPT = `
-            <style id="sc-visual-style">
-                .visual-mode-active { cursor: default; }
-                .visual-mode-active * { cursor: pointer; transition: outline 0.1s; }
-                .visual-mode-active *:hover { outline: 1px dashed #6366f1; }
-                .sc-selected { outline: 2px solid #6366f1 !important; z-index: 9999; }
-                .sc-dragging { opacity: 0.8; cursor: move !important; }
-                .sc-editing { outline: 2px dashed #10b981 !important; cursor: text !important; min-width: 10px; min-height: 1em; }
-            </style>
-            <script id="sc-visual-script">
-                (function() {
-                    let isVisualMode = false;
-                    let selectedEl = null;
-                    let startX = 0, startY = 0;
-                    let startLeft = 0, startTop = 0;
-                    let isDragging = false;
-                    let isEditing = false;
-
-                    window.enableVisual = () => {
-                        isVisualMode = true;
-                        document.body.classList.add('visual-mode-active');
-                        document.addEventListener('click', handleSelect, true);
-                        document.addEventListener('mousedown', handleDragStart);
-                        document.addEventListener('dblclick', handleEdit, true);
-                    };
-
-                    window.disableVisual = () => {
-                        isVisualMode = false;
-                        document.body.classList.remove('visual-mode-active');
-                        deselect();
-                        document.removeEventListener('click', handleSelect, true);
-                        document.removeEventListener('mousedown', handleDragStart);
-                        document.removeEventListener('dblclick', handleEdit, true);
-                    };
-
-                    function deselect() {
-                        if (selectedEl) {
-                            selectedEl.classList.remove('sc-selected');
-                            selectedEl = null;
-                        }
-                        window.parent.postMessage({type: 'SELECTION_CLEARED'}, '*');
-                    }
-
-                    // 提取进入编辑模式的逻辑，供双击和按钮点击共用
-                    function enterEditMode(el) {
-                        if (selectedEl) selectedEl.classList.remove('sc-selected'); // 编辑时暂时隐藏选中框
-                        
-                        isEditing = true;
-                        el.contentEditable = 'true';
-                        el.classList.add('sc-editing');
-                        el.focus();
-                        
-                        const onBlur = () => {
-                            el.contentEditable = 'false';
-                            el.classList.remove('sc-editing');
-                            isEditing = false;
-                            el.removeEventListener('blur', onBlur);
-                            // 恢复选中框（可选，或者让用户重新点击）
-                            // if(el === selectedEl) el.classList.add('sc-selected');
-                            syncCode();
-                        };
-                        
-                        el.addEventListener('blur', onBlur);
-                    }
-
-                    function handleEdit(e) {
-                        if (!isVisualMode) return;
-                        e.stopPropagation();
-                        e.preventDefault();
-                        
-                        const el = e.target;
-                        if (el === document.body || el === document.documentElement) return;
-                        
-                        enterEditMode(el);
-                    }
-
-                    function handleSelect(e) {
-                        if (!isVisualMode || isDragging || isEditing) return;
-                        const target = e.target;
-                            if (
-                                target.id === 'imageModal' || 
-                                target.id === 'modalImg' ||
-                                target.closest('#imageModal') !== null
-                            ) {
-                                // 如果点到了 Modal 里面的东西，直接放行原有的点击交互（比如关闭弹窗）
-                                // 并且不要选中它
-                                return; 
-                            }
-                        e.stopPropagation();
-                        e.preventDefault();
-
-                        // 忽略 body 选择
-                        if (e.target === document.body || e.target === document.documentElement) {
-                            deselect();
-                            return;
-                        }
-
-                        if (selectedEl) selectedEl.classList.remove('sc-selected');
-                        selectedEl = e.target;
-                        selectedEl.classList.add('sc-selected');
-
-                        // 发送当前选中元素信息
-                        const style = window.getComputedStyle(selectedEl);
-                        window.parent.postMessage({
-                            type: 'ELEMENT_SELECTED',
-                            payload: {
-                                tagName: selectedEl.tagName,
-                                fontSize: style.fontSize,
-                                color: style.color,
-                                src: selectedEl.src || null // 🌟 确保如果有 src 就传出去，没有传 null
-                            }
-                        }, '*');
-                    }
-
-                    function handleDragStart(e) {
-                        if (!isVisualMode || !selectedEl || e.target !== selectedEl || isEditing) return;
-                        // 允许拖拽
-                        e.preventDefault();
-                        isDragging = true;
-                        startX = e.clientX;
-                        startY = e.clientY;
-                        selectedEl.classList.add('sc-dragging');
-
-                        const style = window.getComputedStyle(selectedEl);
-                        
-                        // 自动升级为 relative 定位以便移动
-                        if (style.position === 'static') {
-                            selectedEl.style.position = 'relative';
-                        }
-                        
-                        // 解析当前 left/top
-                        startLeft = parseFloat(style.left) || 0;
-                        startTop = parseFloat(style.top) || 0;
-                        
-                        // 如果是 relative，left/top 可能是 auto，需特殊处理
-                        if (style.position === 'relative' && style.left === 'auto') startLeft = 0;
-                        if (style.position === 'relative' && style.top === 'auto') startTop = 0;
-
-                        document.addEventListener('mousemove', handleDragMove);
-                        document.addEventListener('mouseup', handleDragEnd);
-                    }
-
-                    function handleDragMove(e) {
-                        if (!isDragging || !selectedEl) return;
-                        const dx = e.clientX - startX;
-                        const dy = e.clientY - startY;
-
-                        selectedEl.style.left = (startLeft + dx) + 'px';
-                        selectedEl.style.top = (startTop + dy) + 'px';
-                    }
-
-                    function handleDragEnd(e) {
-                        isDragging = false;
-                        if (selectedEl) selectedEl.classList.remove('sc-dragging');
-                        document.removeEventListener('mousemove', handleDragMove);
-                        document.removeEventListener('mouseup', handleDragEnd);
-                        
-                        // 拖拽结束，同步代码
-                        // 防止误触点击事件，稍微延迟一下
-                        setTimeout(() => syncCode(), 50);
-                    }
-
-                    // 供父级调用的 API
-                    window.updateSelectedStyle = (key, value) => {
-                        if (!selectedEl) return;
-                        
-                        if (key === 'fontSize') {
-                            let current = parseFloat(window.getComputedStyle(selectedEl).fontSize);
-                            if (value === 'up') selectedEl.style.fontSize = (current + 2) + 'px';
-                            if (value === 'down') selectedEl.style.fontSize = Math.max(8, current - 2) + 'px';
-                        } else if (key === 'color') {
-                            selectedEl.style.color = value;
-                        } else if (key === 'delete') {
-                            selectedEl.remove();
-                            deselect();
-                        } else if (key === 'editText') {
-                            enterEditMode(selectedEl);
-                            return; // 编辑模式由 blur 触发 sync，这里不需要立即 sync
-                        } else if (key === 'bold') {
-                            selectedEl.style.fontWeight = selectedEl.style.fontWeight === 'bold' || parseInt(selectedEl.style.fontWeight) >= 700 ? 'normal' : 'bold';
-                        } else if (key === 'italic') {
-                            selectedEl.style.fontStyle = selectedEl.style.fontStyle === 'italic' ? 'normal' : 'italic';
-                        } else if (key === 'underline') {
-                            selectedEl.style.textDecoration = selectedEl.style.textDecoration.includes('underline') ? 'none' : 'underline';
-                        }
-                        
-                        syncCode();
-                    };
-
-                    function syncCode() {
-                        // 克隆整个文档以避免修改当前视图，并保留 head
-                        const clone = document.documentElement.cloneNode(true);
-                        
-                        // 移除编辑器注入的辅助样式和脚本
-                        const toRemove = ['#sc-preview-reset', '#sc-visual-style', '#sc-visual-script'];
-                        toRemove.forEach(id => {
-                            const el = clone.querySelector(id);
-                            if (el) el.remove();
-                        });
-
-                        // 🔥 新增：移除可能被浏览器/插件注入的 Tailwind 冗余样式块 🔥
-                        // 这种样式块通常包含 --tw-border-spacing-x 等变量，如果不移除会导致 HTML 代码急剧膨胀
-                        const styles = clone.querySelectorAll('style');
-                        styles.forEach(style => {
-                            if (style.textContent && 
-                                style.textContent.includes('--tw-border-spacing-x:0') && 
-                                style.textContent.includes('--tw-rotate:0')) {
-                                style.remove();
-                            }
-                        });
-                        
-                        // 清理 body 上的编辑器类名
-                        const body = clone.querySelector('body');
-                        if (body) {
-                            body.classList.remove('visual-mode-active');
-                        }
-                        
-                        // 清理元素上的选中状态类名
-                        const selected = clone.querySelector('.sc-selected');
-                        if (selected) selected.classList.remove('sc-selected');
-                        const dragging = clone.querySelector('.sc-dragging');
-                        if (dragging) dragging.classList.remove('sc-dragging');
-                        
-                        // 清理 contentEditable 属性和编辑类名
-                        const editables = clone.querySelectorAll('[contenteditable]');
-                        editables.forEach(el => el.removeAttribute('contenteditable'));
-                        const editing = clone.querySelector('.sc-editing');
-                        if (editing) editing.classList.remove('sc-editing');
-
-                        // 构造完整的 HTML 字符串，包含 DOCTYPE
-                        const doctype = document.doctype;
-                        const doctypeString = doctype 
-                            ? '<!DOCTYPE ' + doctype.name + (doctype.publicId ? ' PUBLIC "' + doctype.publicId + '"' : '') + (doctype.systemId ? ' "' + doctype.systemId + '"' : '') + '>' 
-                            : '<!DOCTYPE html>';
-                        
-                        const fullHtml = doctypeString + '\\n' + clone.outerHTML;
-
-                        window.parent.postMessage({type: 'CODE_UPDATE', payload: fullHtml}, '*');
-                    }
-                })();
-            <\/script>
-        `;
+        
 
         const injectPreview = (html, includeVisualScript = false) => {
             const isFullHtml = html.trim().match(/^<!DOCTYPE/i) || html.trim().match(/^<html/i);
-            const script = includeVisualScript ? VISUAL_SCRIPT : '';
+            const script = '';
             
             // 🔥 在生成的 iframe 样式中也强制亮色模式和禁用颜色调整 🔥
             if (isFullHtml) {
@@ -498,6 +264,250 @@
             </style></head><body>${html}${script}</body></html>`;
         };
         
+        
+        window.initVisualEditor = function(iframe, callbacks) {
+            const win = iframe.contentWindow;
+            const doc = iframe.contentDocument || win?.document;
+            if (!win || !doc) return;
+
+            let selectedEl = null;
+            let startX = 0, startY = 0, startLeft = 0, startTop = 0;
+            let isDragging = false;
+            let isEditing = false;
+            let toolbarEl = null;
+
+            if (!doc.getElementById('sc-visual-style')) {
+                const style = doc.createElement('style');
+                style.id = 'sc-visual-style';
+                style.textContent = `
+                    .sc-selected { outline: 2px solid #6366f1 !important; outline-offset: 2px; z-index: 9999; cursor: move; }
+                    .sc-dragging { opacity: 0.6; }
+                    .sc-editing { cursor: text !important; outline: 2px dashed #10b981 !important; outline-offset: 4px; min-width: 10px; min-height: 1em; }
+                    #sc-page-toolbar {
+                        position: absolute; z-index: 10000; background: #4f46e5; color: white;
+                        border: none; padding: 6px 16px; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                        font-family: system-ui, sans-serif; font-size: 14px; font-weight: bold;
+                        cursor: pointer; display: none; align-items: center; gap: 6px; transition: background 0.2s;
+                    }
+                    #sc-page-toolbar:hover { background: #4338ca; }
+                `;
+                doc.head.appendChild(style);
+            }
+
+            if (!doc.getElementById('sc-page-toolbar')) {
+                toolbarEl = doc.createElement('button');
+                toolbarEl.id = 'sc-page-toolbar';
+                toolbarEl.innerHTML = '✏️ 点击编辑';
+                toolbarEl.onmousedown = (e) => {
+                    e.preventDefault(); e.stopPropagation();
+                    if (selectedEl) enterEditMode(selectedEl);
+                };
+                doc.body.appendChild(toolbarEl);
+            } else {
+                toolbarEl = doc.getElementById('sc-page-toolbar');
+            }
+
+            function deselect() {
+                if (selectedEl) {
+                    selectedEl.classList.remove('sc-selected');
+                    if (isEditing) {
+                        selectedEl.removeAttribute('contenteditable');
+                        selectedEl.classList.remove('sc-editing');
+                        isEditing = false;
+                    }
+                    selectedEl = null;
+                }
+                if (toolbarEl) toolbarEl.style.display = 'none';
+                if (callbacks.onSelectionCleared) callbacks.onSelectionCleared();
+            }
+
+            function handleSelect(e) {
+                if (isDragging || isEditing) return;
+                const target = e.target;
+                if (target === toolbarEl || target.closest('#sc-page-toolbar')) return;
+
+                e.stopPropagation();
+                if (target.tagName === 'A') e.preventDefault();
+
+                if (target === doc.body || target === doc.documentElement) {
+                    deselect();
+                    return;
+                }
+
+                if (selectedEl && selectedEl !== target) deselect();
+
+                selectedEl = target;
+                selectedEl.classList.add('sc-selected');
+
+                if (toolbarEl) {
+                    const rect = selectedEl.getBoundingClientRect();
+                    toolbarEl.style.display = 'flex';
+                    toolbarEl.style.top = Math.max(0, win.scrollY + rect.top - 40) + 'px';
+                    toolbarEl.style.left = (win.scrollX + rect.left) + 'px';
+                }
+
+                const style = win.getComputedStyle(selectedEl);
+                if (callbacks.onElementSelected) {
+                    callbacks.onElementSelected({
+                        tagName: selectedEl.tagName,
+                        fontSize: style.fontSize,
+                        color: style.color,
+                        src: selectedEl.src || null
+                    });
+                }
+            }
+
+            function handleDragStart(e) {
+                if (!selectedEl || e.target !== selectedEl || isEditing) return;
+                e.preventDefault();
+                isDragging = true;
+                startX = e.clientX; startY = e.clientY;
+                selectedEl.classList.add('sc-dragging');
+                if (toolbarEl) toolbarEl.style.display = 'none';
+
+                const style = win.getComputedStyle(selectedEl);
+                if (style.position === 'static') selectedEl.style.position = 'relative';
+                startLeft = parseFloat(style.left) || 0;
+                startTop = parseFloat(style.top) || 0;
+
+                doc.addEventListener('mousemove', handleDragMove);
+                doc.addEventListener('mouseup', handleDragEnd);
+            }
+
+            function handleDragMove(e) {
+                if (!isDragging || !selectedEl) return;
+                const dx = e.clientX - startX;
+                const dy = e.clientY - startY;
+                selectedEl.style.left = (startLeft + dx) + 'px';
+                selectedEl.style.top = (startTop + dy) + 'px';
+            }
+
+            function handleDragEnd(e) {
+                isDragging = false;
+                if (selectedEl) {
+                    selectedEl.classList.remove('sc-dragging');
+                    if (toolbarEl) {
+                        const rect = selectedEl.getBoundingClientRect();
+                        toolbarEl.style.display = 'flex';
+                        toolbarEl.style.top = Math.max(0, win.scrollY + rect.top - 40) + 'px';
+                        toolbarEl.style.left = (win.scrollX + rect.left) + 'px';
+                    }
+                }
+                doc.removeEventListener('mousemove', handleDragMove);
+                doc.removeEventListener('mouseup', handleDragEnd);
+                syncCode();
+            }
+
+            function enterEditMode(el) {
+                if (!el) return;
+                isEditing = true;
+                el.classList.remove('sc-selected');
+                el.classList.add('sc-editing');
+                el.contentEditable = 'true';
+                if (toolbarEl) toolbarEl.style.display = 'none';
+
+                setTimeout(() => {
+                    win.focus(); el.focus();
+                    try {
+                        const selection = win.getSelection();
+                        const range = doc.createRange();
+                        range.selectNodeContents(el);
+                        selection.removeAllRanges();
+                        selection.addRange(range);
+                    } catch(err) {}
+                }, 50);
+
+                const onBlur = () => {
+                    el.contentEditable = 'false';
+                    el.classList.remove('sc-editing');
+                    isEditing = false;
+                    el.removeEventListener('blur', onBlur);
+                    el.removeEventListener('keydown', onKeyDown);
+                    syncCode();
+                };
+
+                const onKeyDown = (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        el.blur();
+                    }
+                };
+
+                el.addEventListener('blur', onBlur);
+                el.addEventListener('keydown', onKeyDown);
+            }
+
+            function syncCode() {
+                const clone = doc.documentElement.cloneNode(true);
+                const toRemove = ['#sc-visual-style', '#sc-page-toolbar', '#sc-preview-reset'];
+                toRemove.forEach(id => {
+                    const el = clone.querySelector(id);
+                    if (el) el.remove();
+                });
+
+                const selected = clone.querySelector('.sc-selected');
+                if (selected) selected.classList.remove('sc-selected');
+                const dragging = clone.querySelector('.sc-dragging');
+                if (dragging) dragging.classList.remove('sc-dragging');
+                const editables = clone.querySelectorAll('[contenteditable]');
+                editables.forEach(el => el.removeAttribute('contenteditable'));
+                const editing = clone.querySelector('.sc-editing');
+                if (editing) editing.classList.remove('sc-editing');
+
+                // Also clean tailwind artifacts just in case
+                const styles = clone.querySelectorAll('style');
+                styles.forEach(style => {
+                    if (style.textContent && (style.textContent.includes('--tw-border-spacing-x:0') || style.textContent.includes('--tw-rotate:0'))) {
+                        style.remove();
+                    }
+                });
+
+                const doctype = doc.doctype;
+                const doctypeString = doctype 
+                    ? '<!DOCTYPE ' + doctype.name + (doctype.publicId ? ' PUBLIC "' + doctype.publicId + '"' : '') + (doctype.systemId ? ' "' + doctype.systemId + '"' : '') + '>' 
+                    : '<!DOCTYPE html>';
+
+                const fullHtml = doctypeString + '' + clone.outerHTML;
+                if (callbacks.onCodeUpdate) callbacks.onCodeUpdate(fullHtml);
+            }
+
+            win.updateSelectedStyle = (key, value) => {
+                if (!selectedEl) return;
+                if (key === 'fontSize') {
+                    let current = parseFloat(win.getComputedStyle(selectedEl).fontSize);
+                    if (value === 'up') selectedEl.style.fontSize = (current + 2) + 'px';
+                    if (value === 'down') selectedEl.style.fontSize = Math.max(8, current - 2) + 'px';
+                } else if (key === 'color') {
+                    selectedEl.style.color = value;
+                } else if (key === 'bold') {
+                    let fw = win.getComputedStyle(selectedEl).fontWeight;
+                    selectedEl.style.fontWeight = (fw === 'bold' || parseInt(fw) >= 700) ? 'normal' : 'bold';
+                } else if (key === 'italic') {
+                    selectedEl.style.fontStyle = win.getComputedStyle(selectedEl).fontStyle === 'italic' ? 'normal' : 'italic';
+                } else if (key === 'underline') {
+                    let td = win.getComputedStyle(selectedEl).textDecoration;
+                    selectedEl.style.textDecoration = td.includes('underline') ? 'none' : 'underline';
+                } else if (key === 'delete') {
+                    selectedEl.remove();
+                    deselect();
+                } else if (key === 'editText') {
+                    enterEditMode(selectedEl);
+                    return;
+                }
+                syncCode();
+            };
+
+            // Ensure no duplicate listeners if re-initialized
+            if (win._scHandleSelect) doc.removeEventListener('click', win._scHandleSelect, true);
+            if (win._scHandleDragStart) doc.removeEventListener('mousedown', win._scHandleDragStart);
+
+            win._scHandleSelect = handleSelect;
+            win._scHandleDragStart = handleDragStart;
+
+            doc.addEventListener('click', handleSelect, true);
+            doc.addEventListener('mousedown', handleDragStart);
+        };
+
         const injectThumb = (html) => `<!DOCTYPE html><html><head><link href="https://lib.baomitu.com/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet"><script>function fit(){const w=document.documentElement.clientWidth;const s=w/1344;document.body.style.transform='scale('+s+')';document.body.style.transformOrigin='top left';}window.onload=fit;window.onresize=fit;<\/script><style>
             :root { color-scheme: light; }
             * { forced-color-adjust: none !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
@@ -742,7 +752,7 @@
             const [activeIdx, setActiveIdx] = React.useState(0);
             const [code, setCode] = React.useState(''); 
             const [previewHtml, setPreviewHtml] = React.useState('');
-            const [showCode, setShowCode] = React.useState(true);
+            const [showCode, setShowCode] = React.useState(false);
             const [status, setStatus] = React.useState('idle'); 
             const [editorH, setEditorH] = React.useState(300);
             const [isDragging, setIsDragging] = React.useState(false);
@@ -757,7 +767,7 @@
             const [presScale, setPresScale] = React.useState(1);
             
             // 编辑模式状态
-            const [isVisualMode, setIsVisualMode] = React.useState(false);
+            const [isVisualMode, setIsVisualMode] = React.useState(true);
             const [selectedElement, setSelectedElement] = React.useState(null);
 
             // 🔥 自定义密码弹窗状态 🔥
@@ -765,6 +775,7 @@
             const [pwdCallback, setPwdCallback] = React.useState(null); // 存储验证成功后要执行的操作
             const [inputPwd, setInputPwd] = React.useState('');
             const [cursorPos, setCursorPos] = React.useState(null);
+            
             
             const stageRef = React.useRef(null);
             const fileRef = React.useRef(null);
@@ -842,19 +853,24 @@
 
             const switchSlide = (i) => { 
                 if (i < 0 || i >= slides.length) return; 
-                // 切换幻灯片时关闭编辑模式，防止状态错乱
-                if (isVisualMode) toggleVisualMode();
-                setActiveIdx(i); setCode(slides[i].html); setPreviewHtml(slides[i].html); 
+                setActiveIdx(i); 
+                setCode(slides[i].html); 
+                setPreviewHtml(slides[i].html); 
             };
-            
+
             const handleWheel = (e) => {
-                // 编辑模式下禁用滚轮切页，防止误触
-                if (isVisualMode) return;
                 const now = Date.now();
-                if (now - lastWheelTime.current < 60) return;
+                if (now - lastWheelTime.current < 250) return;
+
                 if (Math.abs(e.deltaY) > 20) {
-                    if (e.deltaY > 0) { if (activeIdx < slides.length - 1) { switchSlide(activeIdx + 1); lastWheelTime.current = now; } } 
-                    else { if (activeIdx > 0) { switchSlide(activeIdx - 1); lastWheelTime.current = now; } }
+                    setActiveIdx(prev => {
+                        const next = e.deltaY > 0 ? Math.min(slides.length - 1, prev + 1) : Math.max(0, prev - 1);
+                        if (next !== prev) {
+                            lastWheelTime.current = now;
+                            setTimeout(() => switchSlide(next), 0);
+                        }
+                        return prev;
+                    });
                 }
             };
 
@@ -1128,18 +1144,23 @@
             
             // 每次 slide 切换重置 iframe 的编辑状态 (因为 srcDoc 会重置)
             const handleEditorLoad = () => {
-                // 应用智能滚动逻辑到编辑器，这样在编辑器里也可以滚动内容而不切页
                 if (iframeRef.current) {
                     setupSmartScroll(iframeRef.current);
-                }
-
-                if (isVisualMode && iframeRef.current?.contentWindow?.enableVisual) {
-                    iframeRef.current.contentWindow.enableVisual();
+                    if (isVisualMode) {
+                        window.initVisualEditor(iframeRef.current, {
+                            onElementSelected: (payload) => setSelectedElement(payload),
+                            onSelectionCleared: () => setSelectedElement(null),
+                            onCodeUpdate: (fullHtml) => updateSlideFromVisual(fullHtml)
+                        });
+                    }
                 }
             };
 
             const execVisualCmd = (key, val) => {
-                iframeRef.current?.contentWindow?.updateSelectedStyle(key, val);
+                const win = iframeRef.current?.contentWindow;
+                if (win && win.updateSelectedStyle) {
+                    win.updateSelectedStyle(key, val);
+                }
             };
 
             const StatusTag = () => { const st = { exporting: {bg:'rgba(59,130,246,0.2)', c:'#60a5fa', t: '导出中'}, saving: {bg:'rgba(234,179,8,0.2)', c:'#facc15', t:'保存中'}, error: {bg:'rgba(239,68,68,0.2)', c:'#f87171', t:'未保存'}, saved: {bg:'rgba(34,197,94,0.2)', c:'#4ade80', t:'已保存'} }[status] || {bg:'transparent', c:'transparent', t:''}; return <span style={{padding:'2px 8px', borderRadius:'4px', background:st.bg, color:st.c, fontSize:'0.75rem', whiteSpace:'nowrap'}}>{st.t}</span>; };
@@ -1278,9 +1299,6 @@
                             <button onClick={()=>setView('dashboard')} style={{ color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 'bold' }}><Icons.Back /> 返回</button>
                             {/* 🔥 编辑按钮 🔥 */}
                             <div style={{display:'flex', gap:'8px'}}>
-                                <button onClick={toggleVisualMode} style={{ color: isVisualMode ? '#6366f1' : '#9ca3af', background: isVisualMode ? 'rgba(99,102,241,0.1)' : 'transparent', padding:'6px', borderRadius:'6px', border: '1px solid ' + (isVisualMode ? '#6366f1' : 'transparent'), cursor: 'pointer', display: 'flex', alignItems: 'center' }} title="可视化编辑">
-                                    <Icons.Edit />
-                                </button>
                                 <button onClick={enterPresentation} style={{ color: '#ffffff', background: '#4f46e5', padding:'6px 12px', borderRadius:'6px', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 'bold', fontSize: '0.9rem' }} title="开始演示">
                                     <Icons.Play /> 演示
                                 </button>
@@ -1316,44 +1334,6 @@
                             <button onClick={()=>setShowCode(!showCode)} style={{ padding: '6px 12px', background: '#374151', color: '#d1d5db', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: '4px' }}><Icons.Code /> {showCode?'隐藏':'代码'}</button>
                         </div>
                         <div className="stage-container" ref={stageRef} onWheel={handleWheel}>
-                            {/* 🔥 悬浮工具栏 🔥 */}
-                            {isVisualMode && selectedElement && (
-                                <div className="visual-toolbar">
-                                    <span style={{fontSize:'0.8rem', color:'#9ca3af', marginRight:'8px'}}>{selectedElement.tagName.toLowerCase()}</span>
-                                    {/* 隐藏的替换文件上传框 */}
-                                    <input type="file" accept="image/*" ref={replaceFileRef} style={{ display: 'none' }} onChange={handleReplaceImg} />
-
-                                    {/* 如果选中的是图片，就显示替换按钮 */}
-                                    {selectedElement.tagName.toLowerCase() === 'img' && (
-                                        <>
-                                            <button className="tool-btn" title="一键替换该图片" onClick={() => {
-                                                setOldImgUrl(selectedElement.src); // 记录要被替换的旧链接
-                                                if (replaceFileRef.current) replaceFileRef.current.click(); // 触发选择文件
-                                            }}>
-                                                <Icons.Image /> 
-                                            </button>
-                                            <div className="tool-divider"></div>
-                                        </>
-                                    )}
-                                    
-                                    <button className="tool-btn" onClick={() => execVisualCmd('editText')} title="编辑文字"><Icons.Type /></button>
-                                    <div className="tool-divider"></div>
-
-                                    <button className="tool-btn" onClick={() => execVisualCmd('fontSize', 'up')} title="增大字号"><Icons.FontUp /></button>
-                                    <button className="tool-btn" onClick={() => execVisualCmd('fontSize', 'down')} title="减小字号"><Icons.FontDown /></button>
-                                    
-                                    <div className="tool-divider"></div>
-                                    <button className="tool-btn" onClick={() => execVisualCmd('bold')} title="加粗"><Icons.Bold /></button>
-                                    <button className="tool-btn" onClick={() => execVisualCmd('italic')} title="斜体"><Icons.Italic /></button>
-                                    <button className="tool-btn" onClick={() => execVisualCmd('underline')} title="下划线"><Icons.Underline /></button>
-
-                                    <div className="tool-divider"></div>
-                                    <input type="color" value={selectedElement.color || '#000000'} onChange={(e) => execVisualCmd('color', e.target.value)} style={{width:'32px', height:'32px', padding:0, border:'none', background:'none', cursor:'pointer'}} title="文字颜色" />
-                                    <div className="tool-divider"></div>
-                                    <button className="tool-btn" onClick={() => execVisualCmd('delete', null)} style={{color:'#ef4444'}} title="删除元素"><Icons.Trash /></button>
-                                </div>
-                            )}
-
                             <div className="stage-content" style={{ transform: `translate(-50%, -50%) scale(${scale})`, left: pos.left, top: pos.top }}>
                                 <iframe 
                                     ref={iframeRef}
@@ -1363,6 +1343,8 @@
                                 ></iframe>
                             </div>
                         </div>
+
+                        {/* 下方代码编辑区 (根据 showCode 状态显示/隐藏) */}
                         {showCode && (
                             <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0, height: editorH, borderTop: '1px solid #374151' }}>
                                 <div className={`resizer ${isDragging ? 'active' : ''}`} onMouseDown={startDrag}></div>
@@ -1370,12 +1352,11 @@
                                     <div style={{ padding: '8px 16px', background: '#161b22', borderBottom: '1px solid #374151', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', color: '#9ca3af' }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                                             <span style={{ fontWeight: 'bold' }}>HTML Editor</span>
-                                            <button onClick={() => fileRef.current.click()} style={{ color: '#818cf8', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}><Icons.Image /> 图片</button>
+                                            <button onClick={() => { if(fileRef.current) fileRef.current.click() }} style={{ color: '#818cf8', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}><Icons.Image /> 图片</button>
                                             <input type="file" ref={fileRef} onChange={uploadImg} style={{ display: 'none' }} accept="image/*" />
                                         </div>
                                         <button onClick={()=>setShowCode(false)} style={{ color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer' }}><Icons.X /></button>
                                     </div>
-
                                     <textarea 
                                         id="code-editor" 
                                         className="sc-code-textarea"
@@ -1399,10 +1380,86 @@
                                 </div>
                             </div>
                         )}
-                    </div>
-                </div>
+                    </div> {/* 👈 main-workspace 结束 */}
+
+                    {/* 🌟 真正的右侧面板，它和 main-workspace 是平级的 */}
+                    <div style={{ backgroundColor: '#111827', borderLeft: '1px solid #374151', display: 'flex', flexDirection: 'column', zIndex: 100 }}>
+                        <div style={{ padding: '16px', borderBottom: '1px solid #374151', display: 'flex', alignItems: 'center' }}>
+                            <h3 style={{ fontWeight: 'bold', fontSize: '1rem', margin: 0, color: 'white' }}>属性与设置</h3>
+                        </div>
+                        
+                        <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+                            <input type="file" accept="image/*" ref={replaceFileRef} style={{ display: 'none' }} onChange={handleReplaceImg} />
+
+                            {selectedElement ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                                    <div style={{ fontSize: '0.875rem', color: '#9ca3af', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <span style={{ padding: '4px 8px', background: '#374151', borderRadius: '4px', color: 'white', fontWeight: 'bold' }}>
+                                            {selectedElement.tagName.toUpperCase()}
+                                        </span>
+                                        <span>已选中</span>
+                                    </div>
+
+                                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', padding: '16px', background: '#1f2937', borderRadius: '8px', border: '1px solid #374151' }}>
+                                        <button className="tool-btn" onClick={() => execVisualCmd('editText')} title="编辑文字"><Icons.Type /></button>
+                                        <div className="tool-divider"></div>
+                                        <button className="tool-btn" onClick={() => execVisualCmd('fontSize', 'up')} title="放大字号"><Icons.FontUp /></button>
+                                        <button className="tool-btn" onClick={() => execVisualCmd('fontSize', 'down')} title="缩小字号"><Icons.FontDown /></button>
+                                        <div className="tool-divider"></div>
+                                        <button className="tool-btn" onClick={() => execVisualCmd('bold')} title="加粗"><Icons.Bold /></button>
+                                        <button className="tool-btn" onClick={() => execVisualCmd('italic')} title="斜体"><Icons.Italic /></button>
+                                        <button className="tool-btn" onClick={() => execVisualCmd('underline')} title="下划线"><Icons.Underline /></button>
+                                        <div className="tool-divider"></div>
+                                        <input type="color" value={selectedElement.color || '#000000'} onChange={(e) => execVisualCmd('color', e.target.value)} style={{ width: '32px', height: '32px', padding: 0, border: 'none', background: 'none', cursor: 'pointer', borderRadius: '4px' }} title="更改颜色" />
+                                    </div>
+
+                                    {selectedElement.tagName.toLowerCase() === 'img' && (
+                                        <div style={{ padding: '16px', background: '#1f2937', borderRadius: '8px', border: '1px solid #374151' }}>
+                                            <p style={{ fontSize: '0.875rem', color: '#9ca3af', marginBottom: '12px', fontWeight: 'bold' }}>图片设置</p>
+                                            <button 
+                                                onClick={() => {
+                                                    setOldImgUrl(selectedElement.src);
+                                                    if (replaceFileRef.current) replaceFileRef.current.click();
+                                                }}
+                                                style={{ width: '100%', padding: '10px', background: '#4f46e5', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: 'bold', transition: 'background 0.2s' }}
+                                                onMouseOver={(e) => e.target.style.background = '#4338ca'}
+                                                onMouseOut={(e) => e.target.style.background = '#4f46e5'}
+                                            >
+                                                <Icons.Image /> 替换当前图片
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    <div style={{ marginTop: '12px' }}>
+                                        <button 
+                                            onClick={() => execVisualCmd('delete', null)}
+                                            style={{ width: '100%', padding: '10px', background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: 'bold', transition: 'all 0.2s' }}
+                                            onMouseOver={(e) => { e.target.style.background = '#ef4444'; e.target.style.color = 'white'; }}
+                                            onMouseOut={(e) => { e.target.style.background = 'rgba(239,68,68,0.1)'; e.target.style.color = '#ef4444'; }}
+                                        >
+                                            <Icons.Trash /> 删除该元素
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#6b7280', textAlign: 'center', gap: '16px' }}>
+                                    <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: '#1f2937', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4b5563' }}>
+                                        <Icons.Edit />
+                                    </div>
+                                    <p style={{ fontSize: '0.875rem', lineHeight: '1.6' }}>在左侧画布点击任意元素<br/>即可在此修改其属性</p>
+                                    
+                                    <div style={{ marginTop: '40px', padding: '16px', background: '#1f2937', borderRadius: '8px', width: '100%', border: '1px dashed #374151' }}>
+                                        <p style={{ fontSize: '0.875rem', color: '#9ca3af' }}>✨ AI 对话面板准备就绪<br/>(即将接入)</p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div> {/* 👈 右侧面板结束 */}
+
+                </div> 
             );
-        }
+        } // 👈 这是 function Editor() 的结束大括号
+
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
