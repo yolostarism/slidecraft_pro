@@ -1,12 +1,31 @@
-const CACHE_NAME = 'slidecraft-pwa-v1';
+const CACHE_NAME = 'slidecraft-pwa-v3';
 
+// 1. 安装阶段：立即生效，无需等待
+self.addEventListener('install', (event) => {
+    self.skipWaiting(); // 强制覆盖旧的（崩溃的）Service Worker
+});
+
+// 2. 激活阶段：瞬间接管当前网页
+self.addEventListener('activate', (event) => {
+    event.waitUntil(self.clients.claim()); // 确保第一次打开就能开始记录缓存
+    
+    // 清理旧版本的垃圾缓存
+    event.waitUntil(
+        caches.keys().then(names => Promise.all(
+            names.map(name => {
+                if (name !== CACHE_NAME) return caches.delete(name);
+            })
+        ))
+    );
+});
+
+// 3. 拦截网络请求
 self.addEventListener('fetch', (event) => {
     if (event.request.method !== 'GET') return;
-
     const url = event.request.url;
 
-    // 1. 针对你的 API 接口 (分享的数据拉取)
-    // 策略：网络优先，断网时用旧缓存
+    // A. 你的后端 API (比如加载幻灯片数据)
+    // 策略：网络优先，失败时读取上次的缓存
     if (url.includes('/api/')) {
         event.respondWith(
             fetch(event.request)
@@ -20,34 +39,27 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    // 2. 针对超大的 CDN 文件 (React, Babel, Tailwind) 和 HTML 本身
-    // 策略：缓存优先，没有缓存再去网络下载（彻底消灭白屏）
+    // B. React, Tailwind 等巨大静态文件与 HTML 页面
+    // 策略：绝对的缓存优先！只要硬盘里有，0 毫秒瞬间返回！
     event.respondWith(
         caches.match(event.request).then((cachedResponse) => {
             if (cachedResponse) {
-                // 命中缓存，0毫秒返回！不管网多卡，这里都是瞬间完成
-                return cachedResponse;
+                return cachedResponse; // 命中缓存，瞬间起飞
             }
             
             return fetch(event.request).then(response => {
-                if (response && response.status === 200) {
-                    const clone = response.clone();
-                    caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+                // 允许缓存跨域的 CDN 文件 (状态码为 0 的情况)
+                if (!response || (response.status !== 200 && response.status !== 0)) {
+                    return response;
                 }
+                const clone = response.clone();
+                caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
                 return response;
+            }).catch((error) => {
+                // 【修复核心】：断网且没缓存时，绝对不能返回乱码！直接让它报错，防止 JS 引擎死机
+                console.error('断网无法获取资源:', url);
+                throw error; 
             });
-        }).catch(() => {
-            return new Response('当前完全断网，且无本地缓存数据。');
         })
-    );
-});
-
-self.addEventListener('activate', (event) => {
-    event.waitUntil(
-        caches.keys().then(names => Promise.all(
-            names.map(name => {
-                if (name !== CACHE_NAME) return caches.delete(name);
-            })
-        ))
     );
 });
