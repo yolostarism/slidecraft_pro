@@ -535,6 +535,8 @@
             );
         }, (prev, next) => prev.slide.html === next.slide.html && prev.isActive === next.isActive && prev.index === next.index && prev.isDragging === next.isDragging);
         
+        
+        
         function SharedPresentation({ projectId }) {
             const [slides, setSlides] = React.useState([]);
             const [activeIdx, setActiveIdx] = React.useState(0);
@@ -603,34 +605,7 @@
             }, [status, slides.length]);
 
             // 🌟 核心：将 iframe 内部的事件转发到外部，这样既能交互又能翻页
-            const handleIframeLoad = (e) => {
-                try {
-                    const win = e.target.contentWindow;
-                    if (!win) return;
-                    
-                    // 转发滚轮事件
-                    win.addEventListener('wheel', (event) => {
-                        const newEvent = new WheelEvent('wheel', { 
-                            deltaY: event.deltaY, bubbles: true, cancelable: true 
-                        });
-                        window.dispatchEvent(newEvent);
-                    }, { passive: false });
-
-                    // 转发键盘事件（防止用户点击选中文字后，外层收不到键盘翻页指令）
-                    win.addEventListener('keydown', (event) => {
-                        const newEvent = new KeyboardEvent('keydown', {
-                            key: event.key, code: event.code, keyCode: event.keyCode, bubbles: true, cancelable: true
-                        });
-                        window.dispatchEvent(newEvent);
-                        // 阻止默认的上下滚动
-                        if (['ArrowRight', 'ArrowDown', ' ', 'Enter', 'PageDown', 'ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace'].includes(event.key)) {
-                            event.preventDefault(); 
-                        }
-                    });
-                } catch (err) {
-                    console.warn('Iframe 事件注入失败', err);
-                }
-            };
+            const handleIframeLoad = (e) => { setupSmartScroll(e.target); };
 
             if (status === 'loading') return <div className="flex h-screen items-center justify-center bg-gray-900 text-white">正在加载演示文稿...</div>;
             if (status === 'error') return <div className="flex h-screen items-center justify-center bg-gray-900 text-red-500">无法加载此演示文稿，可能已被删除或不存在。</div>;
@@ -900,7 +875,7 @@
                         userMessage: aiPrompt
                     };
 
-                    // 这里调用你的后端接口，后端去请求 DeepSeek 的 API
+                    // 这里调用你的后端接口，后端去请求 DeepSeek
                     const response = await fetch(SERVER_URL + '/generate-slide', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -1106,73 +1081,7 @@
             // 🔥🔥🔥 核心修复：智能 iframe 事件转发器 🔥🔥🔥
             // 如果鼠标下的元素（或其父级）是可滚动的容器，则完全拦截滚轮事件，禁止冒泡到 PPT 切换
             // 无论是否滚动到底部，只要在滚动容器内，就禁止切页
-            const setupSmartScroll = (iframe) => {
-                try {
-                    const win = iframe.contentWindow;
-                    if (!win) return;
-                    
-                    // 递归检查元素是否是“滚动容器”
-                    const isScrollContainer = (el) => {
-                        // 到了 body 就停止
-                        if (!el || el === win.document.body || el === win.document.documentElement) return false;
-                        
-                        const style = win.getComputedStyle(el);
-                        // 判断 overflow 属性
-                        const isOverflow = (style.overflowY === 'auto' || style.overflowY === 'scroll');
-                        // 判断内容是否真的溢出（内容高度大于容器高度）
-                        const hasScrollableContent = el.scrollHeight > el.clientHeight;
-
-                        // 只要具备滚动能力，就视为滚动容器，无论当前滚动到了哪里
-                        if (isOverflow && hasScrollableContent) {
-                            return true;
-                        }
-                        
-                        // 递归检查父级
-                        return isScrollContainer(el.parentElement);
-                    };
-
-                    win.addEventListener('wheel', (event) => {
-                        // 1. 检查鼠标是否悬停在某个可滚动的容器上
-                        if (isScrollContainer(event.target)) {
-                            // 如果是，阻止事件冒泡到可能的父级监听器，
-                            // 并不执行下面的 dispatchEvent，从而“捕获”滚动在 iframe 内部
-                            event.stopPropagation();
-                            // 注意：这里不要 preventDefault()，否则 iframe 内部的内容就没法滚动了
-                            return; 
-                        }
-
-                        // 2. 如果不在滚动容器内（例如在背景上），则转发给父级切换 PPT
-                        event.preventDefault(); // 阻止 iframe 默认行为
-                        
-                        const newEvent = new WheelEvent('wheel', {
-                            deltaY: event.deltaY,
-                            bubbles: true,
-                            cancelable: true,
-                            view: window
-                        });
-                        window.dispatchEvent(newEvent);
-                    }, { passive: false });
-
-                    // 键盘事件转发保持不变
-                    win.addEventListener('keydown', (event) => {
-                        // 🔥 修复：如果在编辑文本，不要拦截按键，也不要转发给父级 🔥
-                        if (event.target.isContentEditable || event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
-                            return; 
-                        }
-
-                        const newEvent = new KeyboardEvent('keydown', {
-                            key: event.key, code: event.code, keyCode: event.keyCode,
-                            bubbles: true, cancelable: true, view: window
-                        });
-                        window.dispatchEvent(newEvent); 
-                        if (['ArrowRight', 'ArrowDown', ' ', 'Enter', 'PageDown', 'ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace', 'Escape'].includes(event.key)) {
-                             event.preventDefault();
-                        }
-                    });
-
-                } catch (err) { console.warn("Iframe setup failed", err); }
-            };
-
+            
             const handlePresIframeLoad = (e) => {
                 setupSmartScroll(e.target);
             };
