@@ -536,7 +536,55 @@
         }, (prev, next) => prev.slide.html === next.slide.html && prev.isActive === next.isActive && prev.index === next.index && prev.isDragging === next.isDragging);
         
         
-        
+        const setupSmartScroll = (iframe) => {
+            try {
+                const win = iframe.contentWindow;
+                if (!win) return;
+
+                const isScrollContainer = (el) => {
+                    if (!el || el === win.document.body || el === win.document.documentElement) return false;
+                    const style = win.getComputedStyle(el);
+                    const isOverflow = (style.overflowY === 'auto' || style.overflowY === 'scroll');
+                    const hasScrollableContent = el.scrollHeight > el.clientHeight;
+                    if (isOverflow && hasScrollableContent) return true;
+                    return isScrollContainer(el.parentElement);
+                };
+
+                // Clear previous listeners
+                if (win._scWheelHandler) win.removeEventListener('wheel', win._scWheelHandler, { passive: false });
+                if (win._scKeydownHandler) win.removeEventListener('keydown', win._scKeydownHandler);
+
+                win._scWheelHandler = (event) => {
+                    if (isScrollContainer(event.target)) {
+                        event.stopPropagation();
+                        return; 
+                    }
+                    event.preventDefault(); 
+                    // Create a wheel event that bubbles in the PARENT window
+                    const newEvent = new WheelEvent('wheel', {
+                        deltaY: event.deltaY, bubbles: true, cancelable: true, view: window
+                    });
+                    window.dispatchEvent(newEvent);
+                };
+
+                win._scKeydownHandler = (event) => {
+                    if (event.target.isContentEditable || event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return; 
+                    const newEvent = new KeyboardEvent('keydown', {
+                        key: event.key, code: event.code, keyCode: event.keyCode,
+                        bubbles: true, cancelable: true, view: window
+                    });
+                    window.dispatchEvent(newEvent); 
+                    if (['ArrowRight', 'ArrowDown', ' ', 'Enter', 'PageDown', 'ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace', 'Escape'].includes(event.key)) {
+                         event.preventDefault();
+                    }
+                };
+
+                win.addEventListener('wheel', win._scWheelHandler, { passive: false });
+                win.addEventListener('keydown', win._scKeydownHandler);
+
+            } catch (err) { console.warn("Iframe setup failed", err); }
+        };
+
         function SharedPresentation({ projectId }) {
             const [slides, setSlides] = React.useState([]);
             const [activeIdx, setActiveIdx] = React.useState(0);
@@ -1082,6 +1130,7 @@
             // 如果鼠标下的元素（或其父级）是可滚动的容器，则完全拦截滚轮事件，禁止冒泡到 PPT 切换
             // 无论是否滚动到底部，只要在滚动容器内，就禁止切页
             
+
             const handlePresIframeLoad = (e) => {
                 setupSmartScroll(e.target);
             };
