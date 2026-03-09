@@ -107,6 +107,17 @@
         .tool-divider { width: 1px; height: 20px; background: #4b5563; margin: 0 4px; }
     </style>
 </head>
+<script>
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/sw.js').then(reg => {
+                console.log('SW 注册成功，CDN大文件已接管！');
+            }).catch(err => {
+                console.log('SW 注册失败:', err);
+            });
+        });
+    }
+</script>
 <body>
     <div id="root">
         <div id="loading-text">正在启动 SlideCraft...</div>
@@ -265,12 +276,12 @@
         };
         
         
-        
         window.initVisualEditor = function(iframe, isEnabled, callbacks) {
             const win = iframe.contentWindow;
             const doc = iframe.contentDocument || win?.document;
             if (!win || !doc) return;
 
+            // 如果禁用可视化编辑，清除所有相关的事件、样式和 UI 元素
             if (!isEnabled) {
                 if (win.deselectVisual) win.deselectVisual();
                 if (win._scHandleSelect) doc.removeEventListener('click', win._scHandleSelect, true);
@@ -286,8 +297,14 @@
             let startX = 0, startY = 0, startLeft = 0, startTop = 0;
             let isDragging = false;
             let isEditing = false;
-            let toolbarEl = doc.getElementById('sc-page-toolbar');
 
+            // 【核心修复：销毁旧的工具栏，防止产生闭包陷阱】
+            let oldToolbar = doc.getElementById('sc-page-toolbar');
+            if (oldToolbar) {
+                oldToolbar.remove();
+            }
+
+            // 注入可视化编辑状态的 CSS
             if (!doc.getElementById('sc-visual-style')) {
                 const style = doc.createElement('style');
                 style.id = 'sc-visual-style';
@@ -306,17 +323,20 @@
                 doc.head.appendChild(style);
             }
 
-            if (!toolbarEl) {
-                toolbarEl = doc.createElement('button');
-                toolbarEl.id = 'sc-page-toolbar';
-                toolbarEl.innerHTML = '✏️ 点击编辑';
-                toolbarEl.onmousedown = (e) => {
-                    e.preventDefault(); e.stopPropagation();
-                    if (selectedEl) enterEditMode(selectedEl);
-                };
-                doc.body.appendChild(toolbarEl);
-            }
+            // 每次都创建全新的编辑按钮，使其可以绑定到最新的 selectedEl 引用
+            let toolbarEl = doc.createElement('button');
+            toolbarEl.id = 'sc-page-toolbar';
+            toolbarEl.innerHTML = '✏️ 点击编辑';
+            toolbarEl.onmousedown = (e) => {
+                e.preventDefault(); 
+                e.stopPropagation();
+                if (selectedEl) {
+                    enterEditMode(selectedEl);
+                }
+            };
+            doc.body.appendChild(toolbarEl);
 
+            // 取消选中的逻辑
             function deselect() {
                 if (selectedEl) {
                     selectedEl.classList.remove('sc-selected');
@@ -330,33 +350,40 @@
                 if (toolbarEl) toolbarEl.style.display = 'none';
                 if (callbacks && callbacks.onSelectionCleared) callbacks.onSelectionCleared();
             }
+            
+            // 暴露给外部调用
             win.deselectVisual = deselect;
 
+            // 选中元素的逻辑
             function handleSelect(e) {
                 if (isDragging || isEditing) return;
                 const target = e.target;
+                
+                // 防止点到了工具栏或不需要选中的顶层容器
                 if (target === toolbarEl || target.closest('#sc-page-toolbar')) return;
-
                 e.stopPropagation();
                 if (target.tagName === 'A') e.preventDefault();
-
                 if (target === doc.body || target === doc.documentElement) {
                     deselect();
                     return;
                 }
-
-                if (selectedEl && selectedEl !== target) deselect();
-
+                
+                if (selectedEl && selectedEl !== target) {
+                    deselect();
+                }
+                
                 selectedEl = target;
                 selectedEl.classList.add('sc-selected');
-
+                
+                // 显示「点击编辑」按钮并定位在元素上方
                 if (toolbarEl) {
                     const rect = selectedEl.getBoundingClientRect();
                     toolbarEl.style.display = 'flex';
                     toolbarEl.style.top = Math.max(0, win.scrollY + rect.top - 40) + 'px';
                     toolbarEl.style.left = (win.scrollX + rect.left) + 'px';
                 }
-
+                
+                // 提取被选元素的样式传递给外部面板（工具栏）
                 const style = win.getComputedStyle(selectedEl);
                 if (callbacks && callbacks.onElementSelected) {
                     callbacks.onElementSelected({
@@ -368,23 +395,28 @@
                 }
             }
 
+            // 拖拽相关逻辑：开始
             function handleDragStart(e) {
                 if (!selectedEl || e.target !== selectedEl || isEditing) return;
                 e.preventDefault();
                 isDragging = true;
-                startX = e.clientX; startY = e.clientY;
+                startX = e.clientX;
+                startY = e.clientY;
                 selectedEl.classList.add('sc-dragging');
                 if (toolbarEl) toolbarEl.style.display = 'none';
-
+                
                 const style = win.getComputedStyle(selectedEl);
-                if (style.position === 'static') selectedEl.style.position = 'relative';
+                if (style.position === 'static') {
+                    selectedEl.style.position = 'relative';
+                }
                 startLeft = parseFloat(style.left) || 0;
                 startTop = parseFloat(style.top) || 0;
-
+                
                 doc.addEventListener('mousemove', handleDragMove);
                 doc.addEventListener('mouseup', handleDragEnd);
             }
 
+            // 拖拽相关逻辑：移动中
             function handleDragMove(e) {
                 if (!isDragging || !selectedEl) return;
                 const dx = e.clientX - startX;
@@ -393,10 +425,12 @@
                 selectedEl.style.top = (startTop + dy) + 'px';
             }
 
+            // 拖拽相关逻辑：结束
             function handleDragEnd(e) {
                 isDragging = false;
                 if (selectedEl) {
                     selectedEl.classList.remove('sc-dragging');
+                    // 移动完毕后重新定位工具栏
                     if (toolbarEl) {
                         const rect = selectedEl.getBoundingClientRect();
                         toolbarEl.style.display = 'flex';
@@ -409,6 +443,7 @@
                 syncCode();
             }
 
+            // 进入文字编辑模式
             function enterEditMode(el) {
                 if (!el) return;
                 isEditing = true;
@@ -416,9 +451,11 @@
                 el.classList.add('sc-editing');
                 el.contentEditable = 'true';
                 if (toolbarEl) toolbarEl.style.display = 'none';
-
+                
+                // 自动聚焦并全选文字
                 setTimeout(() => {
-                    win.focus(); el.focus();
+                    win.focus();
+                    el.focus();
                     try {
                         const selection = win.getSelection();
                         const range = doc.createRange();
@@ -427,7 +464,7 @@
                         selection.addRange(range);
                     } catch(err) {}
                 }, 50);
-
+                
                 const onBlur = () => {
                     el.contentEditable = 'false';
                     el.classList.remove('sc-editing');
@@ -436,52 +473,61 @@
                     el.removeEventListener('keydown', onKeyDown);
                     syncCode();
                 };
-
+                
                 const onKeyDown = (e) => {
+                    // 回车键退出编辑，Shift+回车可以换行
                     if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
                         el.blur();
                     }
                 };
-
+                
                 el.addEventListener('blur', onBlur);
                 el.addEventListener('keydown', onKeyDown);
             }
 
+            // 同步可视化改动回代码（HTML）
             function syncCode() {
                 const clone = doc.documentElement.cloneNode(true);
-                const toRemove = ['#sc-visual-style', '#sc-page-toolbar', '#sc-preview-reset'];
+                // 移除所有编辑状态相关的注入标签
+                const toRemove = ['sc-visual-style', 'sc-page-toolbar', 'sc-preview-reset'];
                 toRemove.forEach(id => {
-                    const el = clone.querySelector(id);
+                    const el = clone.querySelector(`#${id}`);
                     if (el) el.remove();
                 });
-
+                
+                // 清理由于操作留下的无用 class 和属性
                 const selected = clone.querySelector('.sc-selected');
                 if (selected) selected.classList.remove('sc-selected');
+                
                 const dragging = clone.querySelector('.sc-dragging');
                 if (dragging) dragging.classList.remove('sc-dragging');
+                
                 const editables = clone.querySelectorAll('[contenteditable]');
                 editables.forEach(el => el.removeAttribute('contenteditable'));
+                
                 const editing = clone.querySelector('.sc-editing');
                 if (editing) editing.classList.remove('sc-editing');
-
+                
+                // 移除可能存在的 Tailwind 冲突 style
                 const styles = clone.querySelectorAll('style');
                 styles.forEach(style => {
                     if (style.textContent && (style.textContent.includes('--tw-border-spacing-x:0') || style.textContent.includes('--tw-rotate:0'))) {
                         style.remove();
                     }
                 });
-
+                
                 const doctype = doc.doctype;
-                const doctypeString = doctype 
-                    ? '<!DOCTYPE ' + doctype.name + (doctype.publicId ? ' PUBLIC "' + doctype.publicId + '"' : '') + (doctype.systemId ? ' "' + doctype.systemId + '"' : '') + '>' 
-                    : '<!DOCTYPE html>';
-
-                const fullHtml = doctypeString + ' ' + clone.outerHTML;
-                if (callbacks && callbacks.onCodeUpdate) callbacks.onCodeUpdate(fullHtml);
+                const doctypeString = doctype ? `<!DOCTYPE ${doctype.name}${doctype.publicId ? ` PUBLIC "${doctype.publicId}"` : ''}${doctype.systemId ? ` "${doctype.systemId}"` : ''}>` : '<!DOCTYPE html>';
+                const fullHtml = doctypeString + '\n' + clone.outerHTML;
+                
+                if (callbacks && callbacks.onCodeUpdate) {
+                    callbacks.onCodeUpdate(fullHtml);
+                }
             }
 
-            win.updateSelectedStyle = (key, value) => {
+            // 处理顶部控制栏（例如字号、加粗、颜色）下发的样式修改
+            win.updateSelectedStyle = function(key, value) {
                 if (!selectedEl) return;
                 if (key === 'fontSize') {
                     let current = parseFloat(win.getComputedStyle(selectedEl).fontSize);
@@ -493,7 +539,7 @@
                     let fw = win.getComputedStyle(selectedEl).fontWeight;
                     selectedEl.style.fontWeight = (fw === 'bold' || parseInt(fw) >= 700) ? 'normal' : 'bold';
                 } else if (key === 'italic') {
-                    selectedEl.style.fontStyle = win.getComputedStyle(selectedEl).fontStyle === 'italic' ? 'normal' : 'italic';
+                    selectedEl.style.fontStyle = (win.getComputedStyle(selectedEl).fontStyle === 'italic') ? 'normal' : 'italic';
                 } else if (key === 'underline') {
                     let td = win.getComputedStyle(selectedEl).textDecoration;
                     selectedEl.style.textDecoration = td.includes('underline') ? 'none' : 'underline';
@@ -502,17 +548,17 @@
                     deselect();
                 } else if (key === 'editText') {
                     enterEditMode(selectedEl);
-                    return;
+                    return; // 进入编辑模式，等待失焦时自动同步
                 }
                 syncCode();
             };
 
+            // 清理旧事件，绑定新事件
             if (win._scHandleSelect) doc.removeEventListener('click', win._scHandleSelect, true);
             if (win._scHandleDragStart) doc.removeEventListener('mousedown', win._scHandleDragStart);
-
             win._scHandleSelect = handleSelect;
             win._scHandleDragStart = handleDragStart;
-
+            
             doc.addEventListener('click', handleSelect, true);
             doc.addEventListener('mousedown', handleDragStart);
         };
@@ -585,149 +631,217 @@
             } catch (err) { console.warn("Iframe setup failed", err); }
         };
 
-        function SharedPresentation({ projectId }) {
-            const [slides, setSlides] = React.useState([]);
-            const [activeIdx, setActiveIdx] = React.useState(0);
-            const [status, setStatus] = React.useState('loading');
-            const [presScale, setPresScale] = React.useState(1);
-            
-            const lastWheelTime = React.useRef(0); 
+function SharedPresentation({ projectId }) {
+    // 1. 同步读取缓存
+    const initialCacheSlides = () => {
+        try {
+            const cached = localStorage.getItem(`offline_pres_${projectId}`);
+            return cached ? JSON.parse(cached) : [];
+        } catch(e) { return []; }
+    };
+    const initialCacheTw = () => {
+        try {
+            return localStorage.getItem('offline_tw_css') || '';
+        } catch(e) { return ''; }
+    };
 
-            // 获取 PPT 数据
-            React.useEffect(() => {
-                api.getProjectDetails(projectId)
-                    .then(d => {
-                        setSlides(d.slides && d.slides.length ? d.slides : DEFAULTSLIDES);
-                        setStatus('ready');
-                    })
-                    .catch(e => setStatus('error'));
-            }, [projectId]);
+    const _cachedSlides = initialCacheSlides();
+    const hasCache = _cachedSlides.length > 0;
 
-            // 监听键盘、自适应缩放、滚轮
-            React.useEffect(() => {
-                if (status !== 'ready') return;
-                
-                const handleResize = () => {
-                    setPresScale(Math.min(window.innerWidth / 1344, window.innerHeight / 816));
-                };
-                handleResize();
-                
-                const handleKey = (e) => {
-                    if (['ArrowRight', 'ArrowDown', ' ', 'Enter', 'PageDown'].includes(e.key)) {
-                        setActiveIdx(prev => Math.min(slides.length - 1, prev + 1));
-                    } else if (['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace'].includes(e.key)) {
-                        setActiveIdx(prev => Math.max(0, prev - 1));
-                    }
-                };
+    // 状态初始化：如果有缓存，直接 ready！
+    const [slides, setSlides] = React.useState(_cachedSlides);
+    const [status, setStatus] = React.useState(hasCache ? 'ready' : 'loading');
+    const [offlineTwCss, setOfflineTwCss] = React.useState(initialCacheTw());
+    
+    const [activeIdx, setActiveIdx] = React.useState(0);
+    const [presScale, setPresScale] = React.useState(1);
+    const lastWheelTime = React.useRef(0);
 
-                const handleWheel = (e) => {
-                    const now = Date.now();
-                    if (now - lastWheelTime.current < 250) return;
-                    
-                    if (Math.abs(e.deltaY) > 20) { 
-                        if (e.deltaY > 0) {
-                            setActiveIdx(prev => {
-                                const next = Math.min(slides.length - 1, prev + 1);
-                                if (next !== prev) lastWheelTime.current = now;
-                                return next;
-                            });
-                        } else {
-                            setActiveIdx(prev => {
-                                const next = Math.max(0, prev - 1);
-                                if (next !== prev) lastWheelTime.current = now;
-                                return next;
-                            });
-                        }
-                    }
-                };
+    // 【关键】：强制干掉原生的 Loading，防止它遮挡我们秒开的界面
+    React.useLayoutEffect(() => {
+        const l = document.getElementById('loading-text');
+        if (l) l.style.display = 'none';
+    }, []);
 
-                window.addEventListener('keydown', handleKey);
-                window.addEventListener('resize', handleResize);
-                window.addEventListener('wheel', handleWheel);
-                
-                return () => {
-                    window.removeEventListener('keydown', handleKey);
-                    window.removeEventListener('resize', handleResize);
-                    window.removeEventListener('wheel', handleWheel);
-                };
-            }, [status, slides.length]);
+    // 2. 后台网络请求（完全不阻塞 UI）
+    React.useEffect(() => {
+        let isMounted = true;
 
-            // 🌟 核心：将 iframe 内部的事件转发到外部，这样既能交互又能翻页
-            const handleIframeLoad = (e) => { setupSmartScroll(e.target); };
+        const backgroundFetch = async () => {
+            // 断网且有缓存，直接结束，省去不必要的报错和延迟
+            if (!navigator.onLine && hasCache) return;
 
-            if (status === 'loading') return <div className="flex h-screen items-center justify-center bg-gray-900 text-white">正在加载演示文稿...</div>;
-            if (status === 'error') return <div className="flex h-screen items-center justify-center bg-gray-900 text-red-500">无法加载此演示文稿，可能已被删除或不存在。</div>;
+            const fetchWithTimeout = (promise, ms = 5000) => {
+                return new Promise((resolve, reject) => {
+                    const timer = setTimeout(() => reject(new Error('Timeout')), ms);
+                    promise.then(res => { clearTimeout(timer); resolve(res); })
+                           .catch(err => { clearTimeout(timer); reject(err); });
+                });
+            };
 
-            return (
-                <div className="presentation-overlay" style={{ background: '#000' }}>
-                    <div style={{
-                        width: '1344px', height: '816px',
-                        transform: `scale(${presScale})`,
-                        transformOrigin: 'center',
-                        background: 'white',
-                        position: 'relative',
-                        boxShadow: '0 0 50px rgba(0,0,0,0.5)'
-                    }}>
-                        <iframe
-                            srcDoc={injectPreview(slides[activeIdx].html)}
-                            style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
-                            onLoad={handleIframeLoad} // 🌟 挂载转发逻辑，去掉了 pointer-events-none
-                        />
-                    </div>
-                    
-                    {/* 🌟 优化：移动到右下角，缩小尺寸，降低不透明度 */}
-                    <div style={{
-                        position: 'absolute', bottom: '16px', right: '24px',
-                        background: 'rgba(0,0,0,0.2)', color: 'rgba(255,255,255,0.7)', 
-                        padding: '4px 12px', borderRadius: '6px',
-                        fontFamily: 'monospace', fontSize: '12px', pointerEvents: 'none', 
-                        backdropFilter: 'blur(2px)', zIndex: 50
-                    }}>
-                        {activeIdx + 1} / {slides.length}
-                    </div>
-                </div>
+            try {
+                const [dataRes, twRes] = await Promise.allSettled([
+                    fetchWithTimeout(api.getProjectDetails(projectId), 5000),
+                    fetchWithTimeout(fetch('https://lib.baomitu.com/tailwindcss/2.2.19/tailwind.min.css').then(r => r.text()), 8000)
+                ]);
+
+                if (!isMounted) return;
+
+                if (dataRes.status === 'fulfilled') {
+                    const d = dataRes.value;
+                    const finalSlides = (d.slides && d.slides.length) ? d.slides : DEFAULT_SLIDES;
+                    setSlides(finalSlides);
+                    localStorage.setItem(`offline_pres_${projectId}`, JSON.stringify(finalSlides));
+                    setStatus('ready');
+                } else if (!hasCache) {
+                    setStatus('error');
+                }
+
+                if (twRes.status === 'fulfilled' && twRes.value) {
+                    setOfflineTwCss(twRes.value);
+                    localStorage.setItem('offline_tw_css', twRes.value);
+                }
+            } catch (e) {
+                if (!isMounted) return;
+                if (!hasCache) setStatus('error');
+            }
+        };
+
+        backgroundFetch();
+        return () => { isMounted = false; };
+    }, [projectId, hasCache]);
+
+    // 3. 事件监听
+    React.useEffect(() => {
+        if (status !== 'ready') return;
+        
+        const handleResize = () => {
+            setPresScale(Math.min(window.innerWidth / 1344, window.innerHeight / 816));
+        };
+        handleResize();
+        
+        const handleKey = (e) => {
+            if (e.target && (e.target.isContentEditable || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+            if (['ArrowRight', 'ArrowDown', ' ', 'Enter', 'PageDown'].includes(e.key)) {
+                setActiveIdx(prev => Math.min(slides.length - 1, prev + 1));
+            } else if (['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace'].includes(e.key)) {
+                setActiveIdx(prev => Math.max(0, prev - 1));
+            }
+        };
+        
+        const handleWheel = (e) => {
+            const now = Date.now();
+            if (now - lastWheelTime.current < 250) return;
+            if (Math.abs(e.deltaY) > 20) {
+                if (e.deltaY > 0) setActiveIdx(prev => Math.min(slides.length - 1, prev + 1));
+                else setActiveIdx(prev => Math.max(0, prev - 1));
+                lastWheelTime.current = now;
+            }
+        };
+
+        window.addEventListener('keydown', handleKey);
+        window.addEventListener('resize', handleResize);
+        window.addEventListener('wheel', handleWheel, { passive: false });
+        
+        return () => {
+            window.removeEventListener('keydown', handleKey);
+            window.removeEventListener('resize', handleResize);
+            window.removeEventListener('wheel', handleWheel);
+        };
+    }, [status, slides.length]);
+
+    const handleIframeLoad = (e) => {
+        if (typeof setupSmartScroll === 'function') {
+            setupSmartScroll(e.target);
+        }
+    };
+
+    const getOfflineReadyHtml = () => {
+        if (!slides[activeIdx]) return '';
+        let html = injectPreview(slides[activeIdx].html);
+        if (offlineTwCss) {
+            html = html.replace(
+                /<link[^>]*tailwindcss[^>]*>/i, 
+                `<style>${offlineTwCss}</style>`
             );
         }
+        return html;
+    };
 
-        function App() {
-            // 1. 检查是否是分享模式
-            const urlParams = new URLSearchParams(window.location.search);
-            const shareId = urlParams.get('share');
+    if (status === 'loading') {
+        return <div className="flex h-screen items-center justify-center bg-gray-900 text-white font-sans text-xl">正在同步最新数据...</div>;
+    }
+    if (status === 'error') {
+        return <div className="flex h-screen items-center justify-center bg-gray-900 text-red-500 font-sans text-xl">请检查网络。</div>;
+    }
 
-            // 如果是分享模式，直接渲染纯净的播放组件（我们等下写这个组件）
-            if (shareId) {
-                return <SharedPresentation projectId={shareId} />;
-            }
+    return (
+        <div className="presentation-overlay" style={{ background: '#000', margin: 0, padding: 0 }}>
+            <div style={{ 
+                width: '1344px', height: '816px', 
+                transform: `scale(${presScale})`, transformOrigin: 'center', 
+                background: 'white', position: 'relative', boxShadow: '0 0 50px rgba(0,0,0,0.5)' 
+            }}>
+                <iframe 
+                    srcDoc={getOfflineReadyHtml()} 
+                    onLoad={handleIframeLoad}
+                    style={{ width: '100%', height: '100%', border: 'none', display: 'block' }} 
+                />
+            </div>
+            <div style={{ 
+                position: 'absolute', bottom: '16px', right: '24px', 
+                background: 'rgba(0,0,0,0.2)', color: 'rgba(255,255,255,0.7)', 
+                padding: '4px 12px', borderRadius: '6px', fontFamily: 'monospace', 
+                fontSize: '12px', pointerEvents: 'none', backdropFilter: 'blur(2px)', zIndex: 50 
+            }}>
+                {activeIdx + 1} / {slides.length}
+            </div>
+        </div>
+    );
+}
 
-            // 2. 原来的登录逻辑保持不变
-            const [user, setUser] = React.useState(() => {
-                try {
-                    const val = localStorage.getItem('sc_user');
-                    if (!val) return null;
-                    const parsed = JSON.parse(val);
-                    if (parsed && typeof parsed === 'object' && parsed.id) return parsed;
-                    return null;
-                } catch (e) { return null; }
-            });
+function App() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const shareId = urlParams.get('share');
 
-            React.useEffect(() => {
-                const l = document.getElementById('loading-text');
-                if (l) l.style.display = 'none';
-            }, []);
+    // 【关键】：在最外层强行杀掉原生 Loading 遮罩
+    React.useLayoutEffect(() => {
+        const l = document.getElementById('loading-text');
+        if (l) l.style.display = 'none';
+    }, []);
 
-            const handleLogin = (uData) => {
-                localStorage.setItem('sc_user', JSON.stringify(uData));
-                setUser(uData);
-            };
+    if (shareId) {
+        return <SharedPresentation projectId={shareId} />;
+    }
 
-            const handleLogout = () => {
-                localStorage.removeItem('sc_user');
-                setUser(null);
-            };
-
-            if (!user) return <AuthPage onLogin={handleLogin} />;
-            return <Editor user={user} onLogout={handleLogout} />;
+    // 后面的登录编辑器逻辑保持不变...
+    const [user, setUser] = React.useState(() => {
+        try {
+            const val = localStorage.getItem('sc_user');
+            if (!val) return null;
+            const parsed = JSON.parse(val);
+            if (parsed && typeof parsed === 'object' && parsed.id) return parsed;
+            return null;
+        } catch (e) {
+            return null;
         }
+    });
+
+    const handleLogin = (uData) => {
+        localStorage.setItem('sc_user', JSON.stringify(uData));
+        setUser(uData);
+    };
+
+    const handleLogout = () => {
+        localStorage.removeItem('sc_user');
+        setUser(null);
+    };
+
+    if (!user) {
+        return <AuthPage onLogin={handleLogin} />;
+    }
+    return <Editor user={user} onLogout={handleLogout} />;
+}
 
         function AuthPage({ onLogin }) {
             const [isReg, setIsReg] = React.useState(false);
@@ -984,6 +1098,215 @@
                     });
                 }
             };
+const handleExportOfflineHTML = async () => {
+    setStatus('loading');
+    try {
+        // 1. 获取在线 TailwindCSS 源码，用于断网时离线内嵌
+        let tailwindCSS = '';
+        try {
+            const res = await fetch('https://lib.baomitu.com/tailwindcss/2.2.19/tailwind.min.css');
+            tailwindCSS = await res.text();
+        } catch (e) {
+            console.warn("无法拉取 TailwindCSS 源码", e);
+        }
+
+        // 2. 将图片转为 Base64，断网也能看
+        const urlToBase64 = async (url) => {
+            try {
+                if (url.startsWith('data:image')) return url;
+                const response = await fetch(url);
+                const blob = await response.blob();
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(blob);
+                });
+            } catch (err) {
+                console.warn("图片转换 Base64 失败:", url, err);
+                return url; 
+            }
+        };
+
+        // 3. 处理每张幻灯片
+        const processedSlides = await Promise.all(slides.map(async (slide) => {
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = slide.html;
+            
+            // 替换所有图片
+            const imgs = tempDiv.querySelectorAll('img');
+            for (let i = 0; i < imgs.length; i++) {
+                const img = imgs[i];
+                if (img.src) {
+                    img.src = await urlToBase64(img.src);
+                }
+            }
+            return tempDiv.innerHTML;
+        }));
+
+        // 4. 构建终极独立的纯离线 HTML（内嵌所有样式和脚本）
+        const standaloneHTML = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${title || 'SlideCraft 离线演示'}</title>
+    
+    <!-- 内嵌 TailwindCSS -->
+    ${tailwindCSS ? `<style>${tailwindCSS}</style>` : `<link href="https://lib.baomitu.com/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">`}
+    
+    <style>
+        /* 根级别重置与系统完全一致 */
+        :root { color-scheme: light; }
+        body, html { 
+            margin: 0 !important; 
+            padding: 0 !important; 
+            width: 100vw; 
+            height: 100vh; 
+            overflow: hidden; 
+            background-color: #000; 
+            font-family: system-ui, -apple-system, sans-serif; 
+        }
+        * { box-sizing: border-box !important; }
+
+        /* 翻页外壳控制 */
+        .sc-slide-wrapper { 
+            display: none; 
+            width: 100vw; 
+            height: 100vh; 
+            align-items: center; 
+            justify-content: center; 
+            position: absolute; 
+            top: 0; left: 0; 
+        }
+        .sc-slide-wrapper.active { display: flex; }
+
+        /* 内容缩放容器：1比1复刻编辑器的 1344x816 画布 */
+        .sc-slide-content {
+            width: 1344px !important;
+            height: 816px !important;
+            min-width: 1344px !important;
+            min-height: 816px !important;
+            max-width: 1344px !important;
+            max-height: 816px !important;
+            background: white;
+            position: relative;
+            transform-origin: center center;
+            overflow: hidden !important;
+            box-shadow: 0 0 50px rgba(0,0,0,0.5);
+            /* 这个属性保证了里面用的 h-full w-full 能够基于 1344x816 生效 */
+            display: block !important;
+        }
+
+        /* 强制覆盖所有子元素的样式，模拟 iframe 里的 resetStyle 效果 */
+        .sc-slide-content > div {
+            width: 100% !important;
+            height: 100% !important;
+            max-width: 1344px !important;
+            max-height: 816px !important;
+            overflow: hidden !important;
+            margin: 0 !important;
+        }
+        
+        .sc-slide-content * {
+            word-wrap: break-word !important;
+            overflow-wrap: break-word !important;
+        }
+        
+        .sc-slide-content img, .sc-slide-content svg, .sc-slide-content video {
+            max-width: 100% !important;
+            max-height: 100% !important;
+            object-fit: cover;
+        }
+
+        .page-indicator {
+            position: absolute; bottom: 20px; left: 20px;
+            color: rgba(255,255,255,0.7); font-family: monospace; font-size: 14px; 
+            z-index: 100; background: rgba(0,0,0,0.4); padding: 4px 12px; border-radius: 6px;
+        }
+    </style>
+</head>
+<body>
+    ${processedSlides.map((html, i) => `
+        <div class="sc-slide-wrapper ${i === 0 ? 'active' : ''}">
+            <div class="sc-slide-content">
+                ${html}
+            </div>
+        </div>
+    `).join('')}
+    
+    <div class="page-indicator" id="page-indicator">1 / ${processedSlides.length}</div>
+
+    <script>
+        let currentIndex = 0;
+        const slides = document.querySelectorAll('.sc-slide-wrapper');
+        const indicator = document.getElementById('page-indicator');
+        const total = slides.length;
+        
+        // 动态计算缩放比例，适应不同的屏幕
+        function updateScale() {
+            const scale = Math.min(window.innerWidth / 1344, window.innerHeight / 816);
+            document.querySelectorAll('.sc-slide-content').forEach(el => {
+                el.style.transform = 'scale(' + scale + ')';
+            });
+        }
+        window.addEventListener('resize', updateScale);
+        updateScale(); 
+
+        // 翻页逻辑
+        function switchSlide(index) {
+            if(index < 0 || index >= total) return;
+            slides[currentIndex].classList.remove('active');
+            currentIndex = index;
+            slides[currentIndex].classList.add('active');
+            indicator.innerText = (currentIndex + 1) + ' / ' + total;
+        }
+
+        // 键盘翻页支持
+        window.addEventListener('keydown', (e) => {
+            if (['ArrowRight', 'ArrowDown', ' ', 'Enter', 'PageDown'].includes(e.key)) {
+                switchSlide(currentIndex + 1);
+            } else if (['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace'].includes(e.key)) {
+                switchSlide(currentIndex - 1);
+            }
+        });
+        
+        // 鼠标滚轮翻页支持
+        let lastWheelTime = 0;
+        window.addEventListener('wheel', (e) => {
+             const now = Date.now();
+             if (now - lastWheelTime < 250) return;
+             if (Math.abs(e.deltaY) > 20) {
+                 if (e.deltaY > 0) switchSlide(currentIndex + 1);
+                 else switchSlide(currentIndex - 1);
+                 lastWheelTime = now;
+             }
+        }, { passive: true });
+    <\\/script>
+</body>
+</html>`;
+        
+        const finalHTML = standaloneHTML.replace('<\\/script>', '</s' + 'cript>');
+
+        // 5. 触发下载
+        const blob = new Blob([finalHTML], { type: 'text/html;charset=utf-8' });
+        const downloadUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = `${title || 'SlideCraft_Presentation'}.html`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(downloadUrl);
+
+        setStatus('idle');
+    } catch (error) {
+        console.error("导出失败:", error);
+        alert("导出离线文件失败: " + error.message);
+        setStatus('error');
+    }
+};
+
 
             const handleDragStart = (e, index) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", index); setDraggedItem(index); };
             const handleDragOver = (e, index) => { e.preventDefault(); };
@@ -1384,6 +1707,18 @@ const handleEditorLoad = () => {
                                     分享演示
                                 </button>
                                 
+                            <button 
+                                onClick={handleExportOfflineHTML} 
+                                disabled={status === 'loading'}
+                                style={{
+                                    padding: '6px 12px', background: '#3b82f6', color: 'white', 
+                                    border: 'none', borderRadius: '4px', cursor: status === 'loading' ? 'not-allowed' : 'pointer', 
+                                    fontSize: '0.875rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px'
+                                }}
+                            >
+                                {status === 'loading' ? '正在处理图片并导出...' : '⬇️ 导出离线版'}
+                            </button>
+
                                 <button 
                                     onClick={() => setIsVisualMode(!isVisualMode)}
                                     style={{ 
